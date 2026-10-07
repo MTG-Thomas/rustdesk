@@ -6,6 +6,7 @@ $systemPowerShell = Join-Path $windows 'System32\WindowsPowerShell\v1.0'
 $script = @'
 $ErrorActionPreference = 'Stop'
 Write-Output ('[QS-TRUST] started-ms=' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+Write-Output ('[QS-TRUST] execution-policy=' + (Get-ExecutionPolicy))
 Import-Module -Name (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop
 Write-Output ('[QS-TRUST] module-ms=' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
 $signature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $env:BIFROST_QS_ARTIFACT
@@ -45,7 +46,7 @@ foreach ($mode in @('restricted', 'system-path', 'inherited')) {
         Write-Output "[QS-TRUST] mode=$mode finished=$finished elapsed-ms=$($timer.ElapsedMilliseconds)"
         # Only constant stage markers or a numeric SignatureStatus may be logged.
         foreach ($line in ($output.GetAwaiter().GetResult() -split '\r?\n')) {
-            if ($line -match '^\[QS-TRUST\] (started-ms=[0-9]+|module-ms=[0-9]+|status=[0-9]+)$') {
+            if ($line -match '^\[QS-TRUST\] (started-ms=[0-9]+|module-ms=[0-9]+|status=[0-9]+|execution-policy=(AllSigned|Bypass|Default|RemoteSigned|Restricted|Undefined|Unrestricted))$') {
                 Write-Output $line
             }
         }
