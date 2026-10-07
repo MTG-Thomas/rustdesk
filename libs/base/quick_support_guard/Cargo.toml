@@ -1,0 +1,18 @@
+[package]
+name = "quick_support_guard"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "AGPL-3.0-only"
+publish = false
+
+# This primitive has its own lockfile and toolchain qualification. Keep Cargo
+# from enrolling it in the desktop application's ancestor workspace.
+[workspace]
+
+[dependencies]
+base64 = "0.22.1"
+ed25519-dalek = "2.2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = "1.18"
