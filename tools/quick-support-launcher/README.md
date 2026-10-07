@@ -8,6 +8,15 @@ plaintext HTTP, embedded credentials and a missing Authenticode verifier fail
 closed. Files are created exclusively in a caller-owned private directory.
 Failed downloads are removed; pre-existing files are never overwritten.
 
+`VerifyRelease` authenticates compact Ed25519 release descriptors before they
+become download policies. Pin the release key, issuer and HTTPS origin in the
+signed launcher; require the exact approved version and source revision from
+trusted configuration. The verifier rejects forged signatures, cross-purpose
+tokens, duplicate/unknown JSON fields, oversized data and unsafe artifact
+metadata. These immutable release descriptors have no session authority: live
+consent, lease expiry and revocation remain mandatory. The release signer must
+remain separate from session-grant issuance.
+
 Windows signature verification invokes protected system PowerShell with a
 constant, noninteractive script and an explicit system security module. It
 requires Windows `Valid` Authenticode, the expected publisher certificate and a
@@ -24,8 +33,8 @@ seconds with the helper and 0.42 seconds without it in
 [run 37687026630](https://github.com/MTG-Thomas/rustdesk/actions/runs/37687026630).
 Temporary probes were removed; the public trust/publisher test remains in CI.
 
-Remaining launcher gates include signed release-manifest verification, owner-
-only Windows ACLs, isolated RustDesk configuration and IPC, private credential
+Remaining launcher gates include embedding the production release trust pins,
+owner-only Windows ACLs, isolated RustDesk configuration and IPC, private credential
 handoff, session-owned Job Objects, lease renewal, expiry/crash teardown, and
 separate consent-preserving elevation. Do not substitute ordinary RustDesk
 startup for those gates or advertise this package as customer-ready.
