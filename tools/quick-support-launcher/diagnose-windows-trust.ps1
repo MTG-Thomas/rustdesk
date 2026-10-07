@@ -6,9 +6,9 @@ $systemPowerShell = Join-Path $windows 'System32\WindowsPowerShell\v1.0'
 $script = @'
 $ErrorActionPreference = 'Stop'
 Write-Output ('[QS-TRUST] started-ms=' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
-Write-Output ('[QS-TRUST] execution-policy=' + (Get-ExecutionPolicy))
 Import-Module -Name (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop
 Write-Output ('[QS-TRUST] module-ms=' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+Write-Output ('[QS-TRUST] execution-policy=' + (Microsoft.PowerShell.Security\Get-ExecutionPolicy))
 $signature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $env:BIFROST_QS_ARTIFACT
 Write-Output ('[QS-TRUST] status=' + [int]$signature.Status)
 exit 0
@@ -16,7 +16,7 @@ exit 0
 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
 # Compare the normal CI environment with the launcher's deliberately narrow one.
 # Each probe retains the same 30-second bound; a pass never waives the failed test.
-foreach ($mode in @('restricted', 'system-path', 'inherited')) {
+foreach ($mode in @('restricted', 'restricted-auto-modules', 'inherited-system-modules', 'inherited')) {
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = Join-Path $systemPowerShell 'powershell.exe'
     $start.Arguments = "-NoLogo -NoProfile -NonInteractive -EncodedCommand $encoded"
@@ -24,14 +24,13 @@ foreach ($mode in @('restricted', 'system-path', 'inherited')) {
     $start.UseShellExecute = $false
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
-    if ($mode -ne 'inherited') {
+    if (-not $mode.StartsWith('inherited')) {
         $start.Environment.Clear()
         $start.Environment['SystemRoot'] = $windows
         $start.Environment['windir'] = $windows
+    }
+    if ($mode -eq 'restricted' -or $mode -eq 'inherited-system-modules') {
         $start.Environment['PSModulePath'] = Join-Path $systemPowerShell 'Modules'
-        if ($mode -eq 'system-path') {
-            $start.Environment['PATH'] = (Join-Path $windows 'System32') + ';' + $systemPowerShell
-        }
     }
     $start.Environment['BIFROST_QS_ARTIFACT'] = $env:BIFROST_QS_TEST_SIGNED_ARTIFACT
     $process = [Diagnostics.Process]::new()
@@ -44,6 +43,7 @@ foreach ($mode in @('restricted', 'system-path', 'inherited')) {
         $finished = $process.WaitForExit(30000)
         if (-not $finished) { $process.Kill($true); $process.WaitForExit() }
         Write-Output "[QS-TRUST] mode=$mode finished=$finished elapsed-ms=$($timer.ElapsedMilliseconds)"
+        Write-Output "[QS-TRUST] exit-code=$($process.ExitCode)"
         # Only constant stage markers or a numeric SignatureStatus may be logged.
         foreach ($line in ($output.GetAwaiter().GetResult() -split '\r?\n')) {
             if ($line -match '^\[QS-TRUST\] (started-ms=[0-9]+|module-ms=[0-9]+|status=[0-9]+|execution-policy=(AllSigned|Bypass|Default|RemoteSigned|Restricted|Undefined|Unrestricted))$') {
