@@ -15,7 +15,7 @@ exit 0
 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
 # Compare the normal CI environment with the launcher's deliberately narrow one.
 # Each probe retains the same 30-second bound; a pass never waives the failed test.
-foreach ($mode in @('restricted', 'profile-folders', 'inherited')) {
+foreach ($mode in @('restricted', 'system-path', 'inherited')) {
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = Join-Path $systemPowerShell 'powershell.exe'
     $start.Arguments = "-NoLogo -NoProfile -NonInteractive -EncodedCommand $encoded"
@@ -28,13 +28,8 @@ foreach ($mode in @('restricted', 'profile-folders', 'inherited')) {
         $start.Environment['SystemRoot'] = $windows
         $start.Environment['windir'] = $windows
         $start.Environment['PSModulePath'] = Join-Path $systemPowerShell 'Modules'
-        if ($mode -eq 'profile-folders') {
-            $start.Environment['USERPROFILE'] = [Environment]::GetFolderPath('UserProfile')
-            $start.Environment['APPDATA'] = [Environment]::GetFolderPath('ApplicationData')
-            $local = [Environment]::GetFolderPath('LocalApplicationData')
-            $start.Environment['LOCALAPPDATA'] = $local
-            $start.Environment['TEMP'] = Join-Path $local 'Temp'
-            $start.Environment['TMP'] = Join-Path $local 'Temp'
+        if ($mode -eq 'system-path') {
+            $start.Environment['PATH'] = (Join-Path $windows 'System32') + ';' + $systemPowerShell
         }
     }
     $start.Environment['BIFROST_QS_ARTIFACT'] = $env:BIFROST_QS_TEST_SIGNED_ARTIFACT
