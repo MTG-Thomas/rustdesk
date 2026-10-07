@@ -8,6 +8,10 @@ $ErrorActionPreference = 'Stop'
 [Console]::WriteLine('[QS-TRUST] started-ms=' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
 $module = $PSHOME + '\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1'
 try {
+    if ($env:BIFROST_QS_PROBE_MODE -eq 'joined') {
+        $module = Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1'
+        Import-Module -Name $module -ErrorAction Stop
+    }
     if ($env:BIFROST_QS_PROBE_MODE -eq 'manifest') { Import-Module -Name $module -ErrorAction Stop }
     if ($env:BIFROST_QS_PROBE_MODE -eq 'gac') {
         $assembly = [Reflection.Assembly]::Load('Microsoft.PowerShell.Security, Version=3.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
@@ -25,7 +29,7 @@ try {
 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
 # Compare module initialization in the same restricted environment.
 # Each probe retains the same 30-second bound; a pass never waives the failed test.
-foreach ($mode in @('manifest', 'gac', 'autoload')) {
+foreach ($mode in @('joined', 'manifest')) {
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = Join-Path $systemPowerShell 'powershell.exe'
     $start.Arguments = "-NoLogo -NoProfile -NonInteractive -EncodedCommand $encoded"
