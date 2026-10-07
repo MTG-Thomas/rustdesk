@@ -6,6 +6,10 @@ rust-version = "1.90"
 license = "AGPL-3.0-only"
 publish = false
 
+# This primitive has its own lockfile and toolchain qualification. Keep Cargo
+# from enrolling it in the desktop application's ancestor workspace.
+[workspace]
+
 [dependencies]
 base64 = "0.22.1"
 ed25519-dalek = "2.2.0"
