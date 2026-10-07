@@ -65,9 +65,5 @@ jobs:
           "BIFROST_QS_TEST_SIGNED_ARTIFACT=$artifact" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Test downloads, public trust and publisher binding
         run: go test -race ./...
-      - name: Diagnose Windows trust latency without relaxing verification
-        if: always() && runner.os == 'Windows' && env.BIFROST_QS_TEST_SIGNED_ARTIFACT != ''
-        shell: pwsh
-        run: ./diagnose-windows-trust.ps1
       - name: Check Go diagnostics
         run: go vet ./...

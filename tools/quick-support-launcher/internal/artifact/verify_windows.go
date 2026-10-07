@@ -29,6 +29,8 @@ func VerifyWindowsAuthenticode(ctx context.Context, file, publisher string) erro
 	}
 	windowsDirectory := syscall.UTF16ToString(buffer[:length])
 	powershellDirectory := filepath.Join(windowsDirectory, "System32", "WindowsPowerShell", "v1.0")
+	// Join-Path autoloads Management and can exhaust the deadline in this narrow
+	// environment. Language-only path construction loads just the Security module.
 	script := `$ErrorActionPreference = 'Stop'
 Import-Module -Name ($PSHOME + '\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop
 $signature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $env:BIFROST_QS_ARTIFACT
