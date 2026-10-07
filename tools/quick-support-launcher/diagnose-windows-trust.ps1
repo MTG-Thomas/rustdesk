@@ -5,20 +5,27 @@ $windows = [Environment]::GetFolderPath('Windows')
 $systemPowerShell = Join-Path $windows 'System32\WindowsPowerShell\v1.0'
 $script = @'
 $ErrorActionPreference = 'Stop'
-Write-Output ('[QS-TRUST] started-ms=' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+[Console]::WriteLine('[QS-TRUST] started-ms=' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
 $module = $PSHOME + '\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1'
-if ($env:BIFROST_QS_PROBE_MODE -eq 'binary') { $module = $PSHOME + '\Microsoft.PowerShell.Security.dll' }
-Import-Module -Name $module -ErrorAction Stop
-Write-Output ('[QS-TRUST] module-ms=' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
-Write-Output ('[QS-TRUST] execution-policy=' + (Microsoft.PowerShell.Security\Get-ExecutionPolicy))
-$signature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $env:BIFROST_QS_ARTIFACT
-Write-Output ('[QS-TRUST] status=' + [int]$signature.Status)
-exit 0
+try {
+    if ($env:BIFROST_QS_PROBE_MODE -eq 'manifest') { Import-Module -Name $module -ErrorAction Stop }
+    if ($env:BIFROST_QS_PROBE_MODE -eq 'gac') {
+        $assembly = [Reflection.Assembly]::Load('Microsoft.PowerShell.Security, Version=3.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
+        Import-Module -Assembly $assembly -ErrorAction Stop
+    }
+    [Console]::WriteLine('[QS-TRUST] module-ms=' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+    $signature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $env:BIFROST_QS_ARTIFACT
+    [Console]::WriteLine('[QS-TRUST] status=' + [int]$signature.Status)
+    exit 0
+} catch {
+    [Console]::WriteLine('[QS-TRUST] error-type=' + $_.Exception.GetType().FullName)
+    exit 1
+}
 '@
 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
-# Compare the system manifest with its system binary module, in the same environment.
+# Compare module initialization in the same restricted environment.
 # Each probe retains the same 30-second bound; a pass never waives the failed test.
-foreach ($mode in @('manifest', 'binary')) {
+foreach ($mode in @('manifest', 'gac', 'autoload')) {
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = Join-Path $systemPowerShell 'powershell.exe'
     $start.Arguments = "-NoLogo -NoProfile -NonInteractive -EncodedCommand $encoded"
@@ -45,7 +52,7 @@ foreach ($mode in @('manifest', 'binary')) {
         Write-Output "[QS-TRUST] exit-code=$($process.ExitCode)"
         # Only constant stage markers or a numeric SignatureStatus may be logged.
         foreach ($line in ($output.GetAwaiter().GetResult() -split '\r?\n')) {
-            if ($line -match '^\[QS-TRUST\] (started-ms=[0-9]+|module-ms=[0-9]+|status=[0-9]+|execution-policy=(AllSigned|Bypass|Default|RemoteSigned|Restricted|Undefined|Unrestricted))$') {
+            if ($line -match '^\[QS-TRUST\] (started-ms=[0-9]+|module-ms=[0-9]+|status=[0-9]+|error-type=[A-Za-z0-9.]{1,120})$') {
                 Write-Output $line
             }
         }
