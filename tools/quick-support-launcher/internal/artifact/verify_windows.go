@@ -30,7 +30,7 @@ func VerifyWindowsAuthenticode(ctx context.Context, file, publisher string) erro
 	windowsDirectory := syscall.UTF16ToString(buffer[:length])
 	powershellDirectory := filepath.Join(windowsDirectory, "System32", "WindowsPowerShell", "v1.0")
 	script := `$ErrorActionPreference = 'Stop'
-Import-Module -Name ($PSHOME + '\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop
+Import-Module -Name ($PSHOME + '\Microsoft.PowerShell.Security.dll') -ErrorAction Stop
 $signature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $env:BIFROST_QS_ARTIFACT
 if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -cne $env:BIFROST_QS_PUBLISHER -or $null -eq $signature.TimeStamperCertificate) { exit 1 }
 exit 0`
