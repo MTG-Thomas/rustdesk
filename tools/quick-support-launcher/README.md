@@ -42,6 +42,24 @@ startup for those gates or advertise this package as customer-ready.
 This module uses the Go standard library with no third-party dependencies.
 Run `go test -race ./...` and `go vet ./...`. A Windows build/runtime check is
 separate from the Linux test results. Signing uses the operator's already
-purchased Basic account `mtg-sopdet-signing` in East US. No certificate profile
-was present in the protected October 7, 2026 inventory; Microsoft identity
-validation and a Public Trust profile must precede customer distribution.
+purchased Basic account `mtg-sopdet-signing` in East US. The protected October 9,
+2026 inventory confirmed `mtg-lab-profile` as active Private Trust. Public identity
+validation remains blocked; a Public Trust profile must precede customer distribution.
+
+`Rehearse Quick Support private signing` is a manual, merged-`master` workflow.
+It tests the verification package, signs its Windows test executable through a
+dedicated profile-scoped OIDC identity, and verifies the exact approved publisher,
+RFC3161 timestamp, private code-signing EKU and pinned Microsoft private root.
+The root is imported only into the ephemeral runner's CurrentUser store and
+removed afterward if this run added it. The seven-day artifact includes a
+source/run/attempt-bound hash and signature receipt. It is a signing rehearsal,
+not the portable support launcher or a patched-client release.
+
+Infra owns the identity setup in `bifrost-infra`'s protected
+`Configure Quick Support private signer` workflow. Before dispatch, the fork's
+`private-artifact-signing` environment must allow only the exact `master` branch
+and contain nonsecret `AZURE_SIGNING_CLIENT_ID`, `AZURE_TENANT_ID`, and
+`LAB_PUBLISHER_SUBJECT` values from the approved identity/profile. The consumer
+checks this policy before login. No PR signing, private key export, customer root
+installation or public distribution is enabled. The existing public-trust
+verification component remains unchanged.
