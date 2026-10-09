@@ -1,0 +1,103 @@
+name: Rehearse Quick Support private signing
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: quick-support-private-signing
+  cancel-in-progress: false
+jobs:
+  sign:
+    if: github.repository == 'MTG-Thomas/rustdesk' && github.ref == 'refs/heads/master'
+    runs-on: windows-2022
+    environment: private-artifact-signing
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PUBLISHER_SUBJECT: ${{ vars.LAB_PUBLISHER_SUBJECT }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require exact master deployment policy and signing configuration
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNING_CLIENT_ID: ${{ vars.AZURE_SIGNING_CLIENT_ID }}
+          SIGNING_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+        run: |
+          foreach ($name in 'SIGNING_CLIENT_ID', 'SIGNING_TENANT_ID', 'PUBLISHER_SUBJECT') {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "Missing signing configuration: $name" }
+          }
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; 'X-GitHub-Api-Version' = '2022-11-28' }
+          $base = 'https://api.github.com/repos/MTG-Thomas/rustdesk/environments/private-artifact-signing'
+          $environment = Invoke-RestMethod $base -Headers $headers
+          $policy = $environment.deployment_branch_policy
+          if (-not $policy.custom_branch_policies -or $policy.protected_branches) { throw 'Exact master deployment policy required.' }
+          $rules = Invoke-RestMethod "$base/deployment-branch-policies" -Headers $headers
+          if ($rules.total_count -ne 1 -or $rules.branch_policies[0].name -cne 'master' -or $rules.branch_policies[0].type -ne 'branch') { throw 'Only the master branch may sign.' }
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.8'
+          cache: false
+      - name: Test and build the artifact-verification test executable
+        working-directory: tools/quick-support-launcher
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP 'rustdesk-1.5.0-x86_64.exe'
+          Invoke-WebRequest -Uri 'https://github.com/rustdesk/rustdesk/releases/download/1.5.0/rustdesk-1.5.0-x86_64.exe' -OutFile $fixture
+          if ((Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash -ne '8555777215510d83d2d61c9dc984e4fcc838bd7e79f9d18a42585431f5e8bb47') { throw 'Signed fixture digest mismatch.' }
+          $env:BIFROST_QS_TEST_SIGNED_ARTIFACT = $fixture
+          go test -race ./...
+          if ($LASTEXITCODE -ne 0) { throw 'Go tests failed.' }
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { throw 'Go diagnostics failed.' }
+          New-Item -ItemType Directory -Path private-rehearsal | Out-Null
+          go test -c -o private-rehearsal/artifact-verification.test.exe ./internal/artifact
+          if ($LASTEXITCODE -ne 0) { throw 'Windows test executable build failed.' }
+          "UNSIGNED_SHA256=$((Get-FileHash private-rehearsal/artifact-verification.test.exe -Algorithm SHA256).Hash)" >> $env:GITHUB_ENV
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_SIGNING_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: a1d63b24-1202-4bfa-9086-cf32d1d352fc
+      - name: Verify exact active private profile
+        run: |
+          $url = 'https://management.azure.com/subscriptions/a1d63b24-1202-4bfa-9086-cf32d1d352fc/resourceGroups/rg-sopdet-signing/providers/Microsoft.CodeSigning/codeSigningAccounts/mtg-sopdet-signing/certificateProfiles/mtg-lab-profile?api-version=2025-10-13'
+          $metadata = az rest --method get --url $url --query '{name:name,type:properties.profileType,status:properties.status}' --only-show-errors -o json
+          if ($LASTEXITCODE -ne 0) { throw 'Signing profile read failed.' }
+          $profile = $metadata | ConvertFrom-Json
+          if ($profile.name -ne 'mtg-lab-profile' -or $profile.type -ne 'PrivateTrust' -or $profile.status -ne 'Active') { throw 'Unexpected signing profile.' }
+      - name: Sign only the internal test executable
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          endpoint: https://eus.codesigning.azure.net/
+          signing-account-name: mtg-sopdet-signing
+          certificate-profile-name: mtg-lab-profile
+          files: ${{ github.workspace }}\tools\quick-support-launcher\private-rehearsal\artifact-verification.test.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+      - name: Independently verify signature and record producer evidence
+        working-directory: tools/quick-support-launcher
+        run: |
+          ./scripts/Verify-PrivateSigning.ps1 -Executable private-rehearsal/artifact-verification.test.exe -PublisherSubject $env:PUBLISHER_SUBJECT -UnsignedSha256 $env:UNSIGNED_SHA256 -SourceCommit $env:GITHUB_SHA -OutputPath private-rehearsal/signing-evidence.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: quick-support-private-rehearsal-${{ github.sha }}
+          path: tools/quick-support-launcher/private-rehearsal/
+          if-no-files-found: error
+          retention-days: 7
