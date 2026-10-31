@@ -39,7 +39,10 @@ handoff, session-owned Job Objects, lease renewal, expiry/crash teardown, and
 separate consent-preserving elevation. Do not substitute ordinary RustDesk
 startup for those gates or advertise this package as customer-ready.
 
-This module uses the Go standard library with no third-party dependencies.
+Artifact verification and ticket cryptography use the Go standard library. The
+binary WebSocket adapter pins [coder/websocket v1.8.15](https://github.com/coder/websocket/tree/v1.8.15) to avoid
+implementing a separate WebSocket framing/handshake stack; it adds no transitive
+module dependencies.
 Run `go test -race ./...` and `go vet ./...`. A Windows build/runtime check is
 separate from the Linux test results. Signing uses the operator's already
 purchased Basic account `mtg-sopdet-signing` in East US. The protected October 9,
@@ -76,19 +79,32 @@ with the same request/key while its original ten-minute window remains open.
 Go does not guarantee zeroization of RSA private-key memory after release.
 
 The capability can authorize only GET upgrades to the two exact HTTPS routes.
-The future WebSocket adapter must disable redirects and proxy configuration,
-verify TLS normally, discard requests after use and never log their headers.
-`Close` clears the retained binary token and blocks future helper authorization;
-it does not erase previously constructed headers, revoke a server lease or close
-an existing socket. Session end must still revoke the remote lease. Pointer
+The native `Lease.Dial` adapter disables redirects and proxy configuration,
+verifies TLS normally and never returns raw handshake errors or response bodies.
+Callers must never log credential-bearing requests or deliberately inspect
+private state.
+`Lease.Close` clears the retained binary token, blocks future helper
+authorization and signals all sockets opened from that lease to close. It does
+not erase previously constructed headers or revoke a server lease. Session end
+must still revoke the remote lease. Pointer
 formatting and JSON serialization redact private helper state, but callers must
 never serialize or log internal credentials deliberately.
 
-This component neither dials a WebSocket nor starts RustDesk. It cannot authorize
-a receiving device, record customer consent, renew a receiver grant or enforce
-Windows process cleanup. Native adapter/launcher wiring, signed client delivery
+The adapter exposes only message-based binary `Read`/`Write` on the two fixed
+routes. It preserves empty RustDesk heartbeat messages, disables compression,
+limits messages to 4 MiB and bounds the handshake to ten seconds. Parent-context
+cancellation, lease expiry or local lease close terminates the socket; closing a
+socket does not end the remote lease. It neither prepares/wakes a container nor
+starts RustDesk. It cannot authorize a receiving device, record customer consent, renew a receiver grant or enforce
+Windows process cleanup. Native RustDesk/launcher wiring, signed client delivery
 and receiver acceptance remain required before remote control can be enabled.
-Existing artifact verification, signing and ordinary RustDesk startup are unchanged.
+Local TLS WebSocket tests verify both routes, exact binary/empty payloads,
+post-handshake lifetime, redirect/TLS denial, blocked-read expiry, lease-close
+teardown and rejection of text/oversized messages. They use synthetic tickets,
+an ephemeral local certificate and a private test transport; the exported API
+accepts no transport, URL, TLS or proxy override. Existing artifact verification,
+signing and ordinary RustDesk startup are unchanged. Native CI and actual Windows
+execution remain required; these Linux tests are not device acceptance.
 
 An optional, local cross-repository check executes the reviewed authority's actual
 TypeScript encryption function under a Node runtime with type stripping, then
