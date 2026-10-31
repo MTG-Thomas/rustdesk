@@ -202,6 +202,13 @@ inherited file ACLs, rename denial, filename rejection, busy-file retry and an
 outside junction sentinel. Cross-compilation and audit do not replace executing
 these tests or proving the complete Windows launcher/receiver lifecycle.
 
+A composed Windows fixture now launches its own test executable in the private
+directory, authenticates both ends of the pipe against retained process handles,
+exchanges a synthetic ping, stops the contained child and cleans the directory.
+It specifically checks that the retained directory handles permit using that
+directory as the child's working directory. This fixture is cross-compiled only;
+Windows execution, RustDesk startup, signing and receiver consent remain unproven.
+
 An optional, local cross-repository check executes the reviewed authority's actual
 TypeScript encryption function under a Node runtime with type stripping, then
 passes its ciphertext directly to the Go consumer. It uses a synthetic ticket;
