@@ -389,3 +389,52 @@ fn nonce_capacity_never_evicts_replay_protection() {
         .authorize(&token, &proof, CHALLENGE, 1000, f.start)
         .is_err());
 }
+
+#[test]
+fn closed_admission_rejects_delayed_consent_and_fresh_grants() {
+    for close_after_approval in [false, true] {
+        let mut f = Fixture::new();
+        f.activate();
+        let mut admission = quick_support_guard::Admission::new(CHALLENGE.into()).unwrap();
+        let token = sign(&f.grant(), &f.issuer);
+        let proof = f.proof(&token, CHALLENGE);
+        admission
+            .request(&mut f.receiver, &token, &proof, 1000, f.start)
+            .unwrap();
+        if close_after_approval {
+            admission.approve_locally(&f.receiver, f.start).unwrap();
+            assert!(admission.can_control(&f.receiver, f.start));
+        }
+        admission.close();
+        admission.close();
+        assert!(!admission.can_control(&f.receiver, f.start));
+        assert!(admission.approve_locally(&f.receiver, f.start).is_err());
+        let mut fresh = f.grant();
+        fresh.jti = URL_SAFE_NO_PAD.encode([18u8; 32]);
+        let fresh = sign(&fresh, &f.issuer);
+        let proof = f.proof(&fresh, CHALLENGE);
+        assert!(admission
+            .request(&mut f.receiver, &fresh, &proof, 1000, f.start)
+            .is_err());
+        assert!(!admission.can_control(&f.receiver, f.start));
+    }
+}
+
+#[test]
+fn admission_closed_before_login_never_consumes_or_accepts_a_grant() {
+    let mut f = Fixture::new();
+    f.activate();
+    let mut admission = quick_support_guard::Admission::new(CHALLENGE.into()).unwrap();
+    admission.close();
+    let token = sign(&f.grant(), &f.issuer);
+    let proof = f.proof(&token, CHALLENGE);
+    assert!(admission
+        .request(&mut f.receiver, &token, &proof, 1000, f.start)
+        .is_err());
+    assert!(admission.approve_locally(&f.receiver, f.start).is_err());
+    // Rejection by the closed connection must not consume another connection's nonce.
+    assert!(f
+        .receiver
+        .authorize(&token, &proof, CHALLENGE, 1000, f.start)
+        .is_ok());
+}

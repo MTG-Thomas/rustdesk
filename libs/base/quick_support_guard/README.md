@@ -33,6 +33,11 @@ fails closed; reissuing a generation is a control-plane action.
   dispatch. Default to desktop only until explicit policy is qualified.
 - Invoke `approve_locally` only from the isolated receiving-side customer
   approval event. Prevent existing installed RustDesk IPC from reaching it.
+- Call `Admission::close` before handling local rejection, customer stop or
+  disconnection. It permanently closes that connection's admission, including
+  after prior approval; delayed approval events and fresh grants cannot reopen
+  it. Use a new admission and fresh challenge for a new connection. This latch
+  does not itself close the transport or authenticate the local event.
 - Check `can_control` before accepting privileged packets and on a bounded
   periodic timer; close active connections when the lease expires. Launcher
   termination alone is insufficient.

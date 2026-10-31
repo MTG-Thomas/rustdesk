@@ -360,6 +360,7 @@ pub struct Admission {
     challenge: String,
     grant_verified: bool,
     customer_approved: bool,
+    closed: bool,
 }
 
 impl Admission {
@@ -372,6 +373,7 @@ impl Admission {
             challenge,
             grant_verified: false,
             customer_approved: false,
+            closed: false,
         })
     }
 
@@ -384,7 +386,7 @@ impl Admission {
         monotonic: Instant,
     ) -> Result<(), Denied> {
         // A second login cannot replace the identity behind an existing prompt.
-        if self.grant_verified {
+        if self.closed || self.grant_verified {
             return Err(Denied);
         }
         receiver.authorize(token, proof, &self.challenge, now, monotonic)?;
@@ -398,7 +400,7 @@ impl Admission {
         receiver: &Receiver,
         monotonic: Instant,
     ) -> Result<(), Denied> {
-        if !self.grant_verified || !receiver.active(monotonic) {
+        if self.closed || !self.grant_verified || !receiver.active(monotonic) {
             return Err(Denied);
         }
         self.customer_approved = true;
@@ -406,6 +408,13 @@ impl Admission {
     }
 
     pub fn can_control(&self, receiver: &Receiver, monotonic: Instant) -> bool {
-        self.grant_verified && self.customer_approved && receiver.active(monotonic)
+        !self.closed && self.grant_verified && self.customer_approved && receiver.active(monotonic)
+    }
+
+    /// Terminal for this connection. Invoke before closing a rejected, stopped,
+    /// or disconnected admission so delayed UI events cannot restore consent.
+    pub fn close(&mut self) {
+        self.closed = true;
+        self.customer_approved = false;
     }
 }
