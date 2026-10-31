@@ -43,6 +43,9 @@ Artifact verification and ticket cryptography use the Go standard library. The
 binary WebSocket adapter pins [coder/websocket v1.8.15](https://github.com/coder/websocket/tree/v1.8.15) to avoid
 implementing a separate WebSocket framing/handshake stack; it adds no transitive
 module dependencies.
+The Windows private-pipe component additionally pins Microsoft go-winio v0.6.4
+and golang.org/x/sys v0.49.0. Its Windows runtime tests are a separate required
+gate; cross-compilation and Linux tests cannot qualify its ACL or peer checks.
 Run `go test -race ./...` and `go vet ./...`. A Windows build/runtime check is
 separate from the Linux test results. Signing uses the operator's already
 purchased Basic account `mtg-sopdet-signing` in East US. The protected October 9,
@@ -123,6 +126,31 @@ RustDesk's raw port-forward mode; unsupported capabilities must be denied by the
 receiver. Neither a random pipe name nor this bridge proves isolation. Linux
 `net.Pipe`/TLS tests establish framing and teardown, not Windows pipe security or
 actual RustDesk/receiver integration.
+
+`internal/privateipc` creates a local Windows named pipe with a protected DACL
+for the current logon SID, rather than the default pipe ACL. The pinned library
+creates the pipe with remote-client rejection. The endpoint accepts once and
+verifies the client's PID against a duplicated live child-process handle; the
+client must use the corresponding `DialParent` check against its trusted live
+parent handle before sending application data. Names are random, strictly
+validated and never accepted as authentication. Wrong peers consume the endpoint
+and fail closed; they are not retried with a broader policy.
+
+The logon ACE grants the pipe rights needed by the library, including instance
+creation. Consequently, checking the server PID on the client is mandatory:
+the DACL and a random name alone do not prevent another process in the same
+logon from attempting to serve another instance. Both expected process handles
+must come from trusted launcher/child ownership, never a browser or IPC-supplied
+PID. The private transport does not authenticate signed bootstrap claims or
+record consent, and `Close` on the endpoint listener does not close a connection
+already handed to `Socket.Bridge`.
+
+Windows tests launch only their own test subprocess with a minimal environment.
+They cover the protected logon DACL, private round trip, wrong client/server
+identity, one-use accept and cancellation. These tests are prepared but have not
+run on Windows while the repository's Actions control remains unresolved.
+Launcher Job Objects, private configuration, RustDesk hooks and receiver-side
+grant/consent enforcement still precede activation.
 
 An optional, local cross-repository check executes the reviewed authority's actual
 TypeScript encryption function under a Node runtime with type stripping, then
