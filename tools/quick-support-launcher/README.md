@@ -152,6 +152,30 @@ run on Windows while the repository's Actions control remains unresolved.
 Launcher Job Objects, private configuration, RustDesk hooks and receiver-side
 grant/consent enforcement still precede activation.
 
+`internal/contained.StartSuspended` is the process-containment component. Its
+unnamed job uses kill-on-last-close with no breakaway permission. The Windows
+job-list creation attribute assigns the child during creation, avoiding the
+orphan interval between creating a suspended process and later assigning a job.
+Unsupported job-list creation fails closed. No handles or caller environment are
+inherited; the explicit minimal environment points temporary/profile fields to
+the caller's session directory. That environment is not proof that RustDesk's
+configuration and ordinary IPC paths have been isolated.
+
+The caller must first verify the release/Authenticode artifact and establish an
+owner-only directory; this component does neither. It requires a context with a
+hard deadline no more than 24 hours away, returns a suspended child and exposes
+only duplicated query/synchronization handles for private-pipe authentication.
+`Resume` is explicit and one-use. Context cancellation/expiry or `Close` closes
+the job and waits boundedly for the direct child. Arguments must contain no
+credentials, and bootstrap/consent still belongs on authenticated private IPC.
+
+Prepared Windows tests query job membership before resume and check direct-child
+and descendant exit on close/expiry, with a synthetic environment-leak marker.
+Those tests have only been cross-compiled, not executed. Actual Windows process
+tree/crash cleanup, artifact-to-launch ownership, private configuration and the
+complete consent-preserving native path remain gates before activation. The
+component follows [Microsoft's atomic job-assignment guidance](https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812).
+
 An optional, local cross-repository check executes the reviewed authority's actual
 TypeScript encryption function under a Node runtime with type stripping, then
 passes its ciphertext directly to the Go consumer. It uses a synthetic ticket;
