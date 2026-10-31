@@ -176,6 +176,32 @@ tree/crash cleanup, artifact-to-launch ownership, private configuration and the
 complete consent-preserving native path remain gates before activation. The
 component follows [Microsoft's atomic job-assignment guidance](https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812).
 
+`internal/sessiondir.New` provides the directory precondition for artifact fetch
+and contained launch. It uses the OS LocalAppData location, creates a fresh
+directory relative to a retained parent handle, and sets its protected,
+inheritable current-user DACL during that same creation call. Existing names are
+never adopted. The returned directory handle denies delete sharing, so the owned
+root cannot be renamed while in use. `FilePath` accepts only a local basename.
+This creates storage; it does not direct RustDesk's configuration or IPC there.
+
+After the owned process tree has stopped, `Cleanup` removes children using a
+root-scoped view and deletes the empty root by its retained handle. It never
+recursively deletes an absolute path. Content-removal failure retains the locked
+directory for a deliberate retry and prevents new path use. Handle-release errors
+remain errors on later calls. Cleanup is explicit: a launcher crash can leave
+private files behind, so crash recovery/receipt reconciliation remains a gate.
+An initialization failure before any artifact is written may also retain an
+empty directory if the OS rejects its handle-based removal; it is never adopted
+or recursively removed by guessing its name.
+
+The module and both helper CI/signing toolchains require Go 1.26.10. Earlier
+Go 1.26 releases before 1.26.9 have the Windows root-operation vulnerability
+[GO-2026-6604](https://pkg.go.dev/vuln/GO-2026-6604). The source toolchain change
+does not enable Actions or change its permissions. Prepared Windows tests cover
+inherited file ACLs, rename denial, filename rejection, busy-file retry and an
+outside junction sentinel. Cross-compilation and audit do not replace executing
+these tests or proving the complete Windows launcher/receiver lifecycle.
+
 An optional, local cross-repository check executes the reviewed authority's actual
 TypeScript encryption function under a Node runtime with type stripping, then
 passes its ciphertext directly to the Go consumer. It uses a synthetic ticket;
