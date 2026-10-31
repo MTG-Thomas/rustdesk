@@ -106,6 +106,24 @@ accepts no transport, URL, TLS or proxy override. Existing artifact verification
 signing and ordinary RustDesk startup are unchanged. Native CI and actual Windows
 execution remain required; these Linux tests are not device acceptance.
 
+`Socket.Bridge` consumes an already authenticated private `net.Conn`, translates
+RustDesk's compact little-endian BytesCodec framing into WebSocket messages in
+both directions, and closes both transports when either fails or the lease ends.
+It bounds declared lengths before allocation, handles fragmented reads and short
+writes, preserves empty heartbeats, and joins both copying goroutines before
+returning. The existing client-only path can wrap a private Windows pipe with
+`hbb_common::tcp::FramedStream::from`; no shared submodule or ordinary transport
+implementation needs to change for this framing interface.
+
+The bridge creates no pipe, listener, process or authorization policy. The
+launcher must authenticate the session-owned child/pipe before calling it and
+enforce owner-only Windows ACLs and process cleanup. Receiver grants and local
+consent remain separate. This interface supports framed desktop traffic, not
+RustDesk's raw port-forward mode; unsupported capabilities must be denied by the
+receiver. Neither a random pipe name nor this bridge proves isolation. Linux
+`net.Pipe`/TLS tests establish framing and teardown, not Windows pipe security or
+actual RustDesk/receiver integration.
+
 An optional, local cross-repository check executes the reviewed authority's actual
 TypeScript encryption function under a Node runtime with type stripping, then
 passes its ciphertext directly to the Go consumer. It uses a synthetic ticket;
