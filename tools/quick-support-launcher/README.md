@@ -63,3 +63,42 @@ and contain nonsecret `AZURE_SIGNING_CLIENT_ID`, `AZURE_TENANT_ID`, and
 checks this policy before login. No PR signing, private key export, customer root
 installation or public distribution is enabled. The existing public-trust
 verification component remains unchanged.
+
+## Cloudflare ticket consumer
+
+The opt-in `internal/transport` package creates an ephemeral RSA-2048 recipient
+for one expected session/request UUID. Only its public `kty/n/e` fields leave the
+helper. It accepts the Bifrost preparation workflow's bounded, strict encrypted
+receipt, validates fixed routes, context label and expiry, then decrypts the
+RSA-OAEP-SHA256 ticket in memory. Successful acceptance consumes the private-key
+handle so another receipt cannot reuse it. Invalid receipts permit reconciliation
+with the same request/key while its original ten-minute window remains open.
+Go does not guarantee zeroization of RSA private-key memory after release.
+
+The capability can authorize only GET upgrades to the two exact HTTPS routes.
+The future WebSocket adapter must disable redirects and proxy configuration,
+verify TLS normally, discard requests after use and never log their headers.
+`Close` clears the retained binary token and blocks future helper authorization;
+it does not erase previously constructed headers, revoke a server lease or close
+an existing socket. Session end must still revoke the remote lease. Pointer
+formatting and JSON serialization redact private helper state, but callers must
+never serialize or log internal credentials deliberately.
+
+This component neither dials a WebSocket nor starts RustDesk. It cannot authorize
+a receiving device, record customer consent, renew a receiver grant or enforce
+Windows process cleanup. Native adapter/launcher wiring, signed client delivery
+and receiver acceptance remain required before remote control can be enabled.
+Existing artifact verification, signing and ordinary RustDesk startup are unchanged.
+
+An optional, local cross-repository check executes the reviewed authority's actual
+TypeScript encryption function under a Node runtime with type stripping, then
+passes its ciphertext directly to the Go consumer. It uses a synthetic ticket;
+only the public recipient enters Node, and the child receives no caller credentials:
+
+```sh
+BIFROST_QS_AUTHORITY_SOURCE=/absolute/path/to/services/quick-support-authority/src/ticket-envelope.ts \
+  go test -race -tags quick_support_interop -run TestAuthorityWebCryptoEnvelope ./internal/transport
+```
+
+Normal `go test` does not require Node or the authority checkout. This interoperability
+check is cryptographic wire-contract proof, not a live Cloudflare or Windows test.
