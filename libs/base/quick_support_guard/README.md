@@ -36,6 +36,11 @@ fails closed; reissuing a generation is a control-plane action.
 - Check `can_control` before accepting privileged packets and on a bounded
   periodic timer; close active connections when the lease expires. Launcher
   termination alone is insufficient.
+- On authenticated session end or local customer stop, call `Receiver::revoke`
+  before closing transports. Revocation is terminal for that receiver generation:
+  neither a fresh signed lease nor a delayed local approval can reactivate it.
+  This local latch does not fetch revocations, close sockets, stop processes or
+  authenticate the event; those integration hooks still require acceptance.
 - Authenticate renewed leases and trusted telemetry; do not accept browser
   assertions as proof of customer approval, elevation or cleanup.
 - Reject startup when signed configuration or isolated IPC is unavailable.
