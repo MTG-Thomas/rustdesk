@@ -33,9 +33,19 @@ fails closed; reissuing a generation is a control-plane action.
   dispatch. Default to desktop only until explicit policy is qualified.
 - Invoke `approve_locally` only from the isolated receiving-side customer
   approval event. Prevent existing installed RustDesk IPC from reaching it.
+- Call `Admission::close` before handling local rejection, customer stop or
+  disconnection. It permanently closes that connection's admission, including
+  after prior approval; delayed approval events and fresh grants cannot reopen
+  it. Use a new admission and fresh challenge for a new connection. This latch
+  does not itself close the transport or authenticate the local event.
 - Check `can_control` before accepting privileged packets and on a bounded
   periodic timer; close active connections when the lease expires. Launcher
   termination alone is insufficient.
+- On authenticated session end or local customer stop, call `Receiver::revoke`
+  before closing transports. Revocation is terminal for that receiver generation:
+  neither a fresh signed lease nor a delayed local approval can reactivate it.
+  This local latch does not fetch revocations, close sockets, stop processes or
+  authenticate the event; those integration hooks still require acceptance.
 - Authenticate renewed leases and trusted telemetry; do not accept browser
   assertions as proof of customer approval, elevation or cleanup.
 - Reject startup when signed configuration or isolated IPC is unavailable.

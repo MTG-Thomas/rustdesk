@@ -93,6 +93,7 @@ pub struct Receiver {
     hard_deadline: Instant,
     lease_deadline: Option<Instant>,
     lease_sequence: Option<u64>,
+    revoked: bool,
     used: HashSet<String>,
 }
 
@@ -239,6 +240,7 @@ impl Receiver {
                 .ok_or(Denied)?,
             lease_deadline: None,
             lease_sequence: None,
+            revoked: false,
             used: HashSet::new(),
         })
     }
@@ -256,6 +258,9 @@ impl Receiver {
     }
 
     pub fn renew(&mut self, token: &str, now: u64, monotonic: Instant) -> Result<(), Denied> {
+        if self.revoked {
+            return Err(Denied);
+        }
         let now = self.effective_time(now, monotonic)?;
         let lease: Lease = verify_token(token, self.issuer_key.as_bytes())?;
         if lease.iss != self.issuer
@@ -288,11 +293,18 @@ impl Receiver {
     }
 
     pub fn active(&self, monotonic: Instant) -> bool {
-        monotonic >= self.monotonic_anchor
+        !self.revoked
+            && monotonic >= self.monotonic_anchor
             && monotonic < self.hard_deadline
             && self
                 .lease_deadline
                 .is_some_and(|deadline| monotonic < deadline)
+    }
+
+    /// Terminal for this receiver generation. Close its transports separately.
+    pub fn revoke(&mut self) {
+        self.revoked = true;
+        self.lease_deadline = None;
     }
 
     pub fn authorize(
@@ -348,6 +360,7 @@ pub struct Admission {
     challenge: String,
     grant_verified: bool,
     customer_approved: bool,
+    closed: bool,
 }
 
 impl Admission {
@@ -360,6 +373,7 @@ impl Admission {
             challenge,
             grant_verified: false,
             customer_approved: false,
+            closed: false,
         })
     }
 
@@ -372,7 +386,7 @@ impl Admission {
         monotonic: Instant,
     ) -> Result<(), Denied> {
         // A second login cannot replace the identity behind an existing prompt.
-        if self.grant_verified {
+        if self.closed || self.grant_verified {
             return Err(Denied);
         }
         receiver.authorize(token, proof, &self.challenge, now, monotonic)?;
@@ -386,7 +400,7 @@ impl Admission {
         receiver: &Receiver,
         monotonic: Instant,
     ) -> Result<(), Denied> {
-        if !self.grant_verified || !receiver.active(monotonic) {
+        if self.closed || !self.grant_verified || !receiver.active(monotonic) {
             return Err(Denied);
         }
         self.customer_approved = true;
@@ -394,6 +408,13 @@ impl Admission {
     }
 
     pub fn can_control(&self, receiver: &Receiver, monotonic: Instant) -> bool {
-        self.grant_verified && self.customer_approved && receiver.active(monotonic)
+        !self.closed && self.grant_verified && self.customer_approved && receiver.active(monotonic)
+    }
+
+    /// Terminal for this connection. Invoke before closing a rejected, stopped,
+    /// or disconnected admission so delayed UI events cannot restore consent.
+    pub fn close(&mut self) {
+        self.closed = true;
+        self.customer_approved = false;
     }
 }

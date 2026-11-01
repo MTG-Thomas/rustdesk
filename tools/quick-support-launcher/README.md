@@ -43,6 +43,9 @@ Artifact verification and ticket cryptography use the Go standard library. The
 binary WebSocket adapter pins [coder/websocket v1.8.15](https://github.com/coder/websocket/tree/v1.8.15) to avoid
 implementing a separate WebSocket framing/handshake stack; it adds no transitive
 module dependencies.
+The Windows private-pipe component additionally pins Microsoft go-winio v0.6.4
+and golang.org/x/sys v0.49.0. Its Windows runtime tests are a separate required
+gate; cross-compilation and Linux tests cannot qualify its ACL or peer checks.
 Run `go test -race ./...` and `go vet ./...`. A Windows build/runtime check is
 separate from the Linux test results. Signing uses the operator's already
 purchased Basic account `mtg-sopdet-signing` in East US. The protected October 9,
@@ -105,6 +108,106 @@ an ephemeral local certificate and a private test transport; the exported API
 accepts no transport, URL, TLS or proxy override. Existing artifact verification,
 signing and ordinary RustDesk startup are unchanged. Native CI and actual Windows
 execution remain required; these Linux tests are not device acceptance.
+
+`Socket.Bridge` consumes an already authenticated private `net.Conn`, translates
+RustDesk's compact little-endian BytesCodec framing into WebSocket messages in
+both directions, and closes both transports when either fails or the lease ends.
+It bounds declared lengths before allocation, handles fragmented reads and short
+writes, preserves empty heartbeats, and joins both copying goroutines before
+returning. The existing client-only path can wrap a private Windows pipe with
+`hbb_common::tcp::FramedStream::from`; no shared submodule or ordinary transport
+implementation needs to change for this framing interface.
+
+The bridge creates no pipe, listener, process or authorization policy. The
+launcher must authenticate the session-owned child/pipe before calling it and
+enforce owner-only Windows ACLs and process cleanup. Receiver grants and local
+consent remain separate. This interface supports framed desktop traffic, not
+RustDesk's raw port-forward mode; unsupported capabilities must be denied by the
+receiver. Neither a random pipe name nor this bridge proves isolation. Linux
+`net.Pipe`/TLS tests establish framing and teardown, not Windows pipe security or
+actual RustDesk/receiver integration.
+
+`internal/privateipc` creates a local Windows named pipe with a protected DACL
+for the current logon SID, rather than the default pipe ACL. The pinned library
+creates the pipe with remote-client rejection. The endpoint accepts once and
+verifies the client's PID against a duplicated live child-process handle; the
+client must use the corresponding `DialParent` check against its trusted live
+parent handle before sending application data. Names are random, strictly
+validated and never accepted as authentication. Wrong peers consume the endpoint
+and fail closed; they are not retried with a broader policy.
+
+The logon ACE grants the pipe rights needed by the library, including instance
+creation. Consequently, checking the server PID on the client is mandatory:
+the DACL and a random name alone do not prevent another process in the same
+logon from attempting to serve another instance. Both expected process handles
+must come from trusted launcher/child ownership, never a browser or IPC-supplied
+PID. The private transport does not authenticate signed bootstrap claims or
+record consent, and `Close` on the endpoint listener does not close a connection
+already handed to `Socket.Bridge`.
+
+Windows tests launch only their own test subprocess with a minimal environment.
+They cover the protected logon DACL, private round trip, wrong client/server
+identity, one-use accept and cancellation. These tests are prepared but have not
+run on Windows while the repository's Actions control remains unresolved.
+Launcher Job Objects, private configuration, RustDesk hooks and receiver-side
+grant/consent enforcement still precede activation.
+
+`internal/contained.StartSuspended` is the process-containment component. Its
+unnamed job uses kill-on-last-close with no breakaway permission. The Windows
+job-list creation attribute assigns the child during creation, avoiding the
+orphan interval between creating a suspended process and later assigning a job.
+Unsupported job-list creation fails closed. No handles or caller environment are
+inherited; the explicit minimal environment points temporary/profile fields to
+the caller's session directory. That environment is not proof that RustDesk's
+configuration and ordinary IPC paths have been isolated.
+
+The caller must first verify the release/Authenticode artifact and establish an
+owner-only directory; this component does neither. It requires a context with a
+hard deadline no more than 24 hours away, returns a suspended child and exposes
+only duplicated query/synchronization handles for private-pipe authentication.
+`Resume` is explicit and one-use. Context cancellation/expiry or `Close` closes
+the job and waits boundedly for the direct child. Arguments must contain no
+credentials, and bootstrap/consent still belongs on authenticated private IPC.
+
+Prepared Windows tests query job membership before resume and check direct-child
+and descendant exit on close/expiry, with a synthetic environment-leak marker.
+Those tests have only been cross-compiled, not executed. Actual Windows process
+tree/crash cleanup, artifact-to-launch ownership, private configuration and the
+complete consent-preserving native path remain gates before activation. The
+component follows [Microsoft's atomic job-assignment guidance](https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812).
+
+`internal/sessiondir.New` provides the directory precondition for artifact fetch
+and contained launch. It uses the OS LocalAppData location, creates a fresh
+directory relative to a retained parent handle, and sets its protected,
+inheritable current-user DACL during that same creation call. Existing names are
+never adopted. The returned directory handle denies delete sharing, so the owned
+root cannot be renamed while in use. `FilePath` accepts only a local basename.
+This creates storage; it does not direct RustDesk's configuration or IPC there.
+
+After the owned process tree has stopped, `Cleanup` removes children using a
+root-scoped view and deletes the empty root by its retained handle. It never
+recursively deletes an absolute path. Content-removal failure retains the locked
+directory for a deliberate retry and prevents new path use. Handle-release errors
+remain errors on later calls. Cleanup is explicit: a launcher crash can leave
+private files behind, so crash recovery/receipt reconciliation remains a gate.
+An initialization failure before any artifact is written may also retain an
+empty directory if the OS rejects its handle-based removal; it is never adopted
+or recursively removed by guessing its name.
+
+The module and both helper CI/signing toolchains require Go 1.26.10. Earlier
+Go 1.26 releases before 1.26.9 have the Windows root-operation vulnerability
+[GO-2026-6604](https://pkg.go.dev/vuln/GO-2026-6604). The source toolchain change
+does not enable Actions or change its permissions. Prepared Windows tests cover
+inherited file ACLs, rename denial, filename rejection, busy-file retry and an
+outside junction sentinel. Cross-compilation and audit do not replace executing
+these tests or proving the complete Windows launcher/receiver lifecycle.
+
+A composed Windows fixture now launches its own test executable in the private
+directory, authenticates both ends of the pipe against retained process handles,
+exchanges a synthetic ping, stops the contained child and cleans the directory.
+It specifically checks that the retained directory handles permit using that
+directory as the child's working directory. This fixture is cross-compiled only;
+Windows execution, RustDesk startup, signing and receiver consent remain unproven.
 
 An optional, local cross-repository check executes the reviewed authority's actual
 TypeScript encryption function under a Node runtime with type stripping, then
