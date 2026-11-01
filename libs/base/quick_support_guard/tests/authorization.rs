@@ -313,6 +313,42 @@ fn technician_authorization_does_not_grant_control_without_local_consent() {
 }
 
 #[test]
+fn receiver_revocation_is_terminal_before_and_after_customer_approval() {
+    for approved in [false, true] {
+        let mut f = Fixture::new();
+        f.activate();
+        let mut admission = quick_support_guard::Admission::new(CHALLENGE.into()).unwrap();
+        let token = sign(&f.grant(), &f.issuer);
+        let proof = f.proof(&token, CHALLENGE);
+        admission
+            .request(&mut f.receiver, &token, &proof, 1000, f.start)
+            .unwrap();
+        if approved {
+            admission.approve_locally(&f.receiver, f.start).unwrap();
+            assert!(admission.can_control(&f.receiver, f.start));
+        }
+        f.receiver.revoke();
+        f.receiver.revoke();
+        assert!(!f.receiver.active(f.start));
+        assert!(!admission.can_control(&f.receiver, f.start));
+        assert!(admission.approve_locally(&f.receiver, f.start).is_err());
+        assert!(f
+            .receiver
+            .renew(&f.lease(2, 1001), 1001, f.start + Duration::from_secs(1))
+            .is_err());
+        assert!(!admission.can_control(&f.receiver, f.start + Duration::from_secs(1)));
+        let mut next = f.grant();
+        next.jti = URL_SAFE_NO_PAD.encode([19; 32]);
+        let token = sign(&next, &f.issuer);
+        let proof = f.proof(&token, CHALLENGE);
+        assert!(f
+            .receiver
+            .authorize(&token, &proof, CHALLENGE, 1000, f.start)
+            .is_err());
+    }
+}
+
+#[test]
 fn stale_local_approval_and_second_login_are_rejected() {
     let mut f = Fixture::new();
     f.activate();
@@ -352,4 +388,53 @@ fn nonce_capacity_never_evicts_replay_protection() {
         .receiver
         .authorize(&token, &proof, CHALLENGE, 1000, f.start)
         .is_err());
+}
+
+#[test]
+fn closed_admission_rejects_delayed_consent_and_fresh_grants() {
+    for close_after_approval in [false, true] {
+        let mut f = Fixture::new();
+        f.activate();
+        let mut admission = quick_support_guard::Admission::new(CHALLENGE.into()).unwrap();
+        let token = sign(&f.grant(), &f.issuer);
+        let proof = f.proof(&token, CHALLENGE);
+        admission
+            .request(&mut f.receiver, &token, &proof, 1000, f.start)
+            .unwrap();
+        if close_after_approval {
+            admission.approve_locally(&f.receiver, f.start).unwrap();
+            assert!(admission.can_control(&f.receiver, f.start));
+        }
+        admission.close();
+        admission.close();
+        assert!(!admission.can_control(&f.receiver, f.start));
+        assert!(admission.approve_locally(&f.receiver, f.start).is_err());
+        let mut fresh = f.grant();
+        fresh.jti = URL_SAFE_NO_PAD.encode([18u8; 32]);
+        let fresh = sign(&fresh, &f.issuer);
+        let proof = f.proof(&fresh, CHALLENGE);
+        assert!(admission
+            .request(&mut f.receiver, &fresh, &proof, 1000, f.start)
+            .is_err());
+        assert!(!admission.can_control(&f.receiver, f.start));
+    }
+}
+
+#[test]
+fn admission_closed_before_login_never_consumes_or_accepts_a_grant() {
+    let mut f = Fixture::new();
+    f.activate();
+    let mut admission = quick_support_guard::Admission::new(CHALLENGE.into()).unwrap();
+    admission.close();
+    let token = sign(&f.grant(), &f.issuer);
+    let proof = f.proof(&token, CHALLENGE);
+    assert!(admission
+        .request(&mut f.receiver, &token, &proof, 1000, f.start)
+        .is_err());
+    assert!(admission.approve_locally(&f.receiver, f.start).is_err());
+    // Rejection by the closed connection must not consume another connection's nonce.
+    assert!(f
+        .receiver
+        .authorize(&token, &proof, CHALLENGE, 1000, f.start)
+        .is_ok());
 }
