@@ -248,3 +248,22 @@ implement the authenticated parent-to-child control/bootstrap contract, pin its
 issuer in the child, and bind it to the expected session/receiver generation.
 Keep receiver consent and privileged-packet admission mandatory after that step.
 No production issuer/signing credentials or executable startup path are added here.
+
+The existing verifier fixes claim vocabulary but does not establish these native
+control-envelope prerequisites:
+
+- Which reviewed signed application configuration supplies `pinned_issuer` and
+  `pinned_key`? They are caller arguments today, with no native application caller.
+- Which authoritative record supplies the expected `session_id`, `receiver_id`
+  and `generation` independently of the received bootstrap, and how is a consumed
+  generation rejected after child restart? The transport lease is not this record.
+- What authenticated envelope orders bootstrap, signed lease renewal and terminal
+  revocation? `Lease.sequence` orders renewals within one `Receiver`; `revoke` is a
+  local method, not an issuer-signed wire event. Neither defines a control channel.
+
+Once resolved, the child must deny peer-frame forwarding until bootstrap is
+verified against that independent expected identity, reject stale/replayed or
+out-of-order control, and require fresh local consent before privileged traffic.
+Revocation and expiry must terminate admission and transport before cleanup.
+These are acceptance requirements, not an implemented or authorized new issuer.
+Synthetic keys used by verifier tests must never become application trust roots.
