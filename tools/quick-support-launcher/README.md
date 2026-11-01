@@ -221,3 +221,17 @@ BIFROST_QS_AUTHORITY_SOURCE=/absolute/path/to/services/quick-support-authority/s
 
 Normal `go test` does not require Node or the authority checkout. This interoperability
 check is cryptographic wire-contract proof, not a live Cloudflare or Windows test.
+
+`internal/lifecycle.Run` now owns artifact verification, a private directory,
+lease-bounded dual transport routes, suspended Job Object launch, child-bound
+pipes and joined teardown. It consumes the supplied lease. The release trust
+must be pinned in a signed launcher; cancellation must come from trusted session
+end/revocation or local customer stop. It never represents customer consent.
+
+This is an internal integration API, not an executable launcher. The reviewed
+child's `--quick-support-private-pipes` entry point, authenticated signed receiver
+bootstrap and consent/privileged-packet hooks still need implementation before
+this API can launch a usable support client. No fallback to ordinary RustDesk
+startup is supplied. The synthetic lifecycle child is only the Go test binary.
+Prepared Windows tests cover authenticated dual-pipe stop/expiry, job exit and
+private-directory cleanup. Cross-compilation does not establish their execution.
