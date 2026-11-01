@@ -114,3 +114,44 @@ func TestPrivateFrameWriterHandlesShortWrites(t *testing.T) {
 		t.Fatal("short writes changed frame")
 	}
 }
+
+// The transport is deliberately opaque. A child must not treat its first frame
+// as trusted launcher bootstrap or as authorization, even on authenticated IPC.
+func TestUnsolicitedPeerFrameIsNotLauncherBootstrap(t *testing.T) {
+	payload := []byte("synthetic-premature-control-not-a-signed-bootstrap")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connection, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer connection.CloseNow()
+		if connection.Write(r.Context(), websocket.MessageBinary, payload) != nil {
+			return
+		}
+		connection.Read(r.Context())
+	}))
+	defer server.Close()
+	lease := socketLease(time.Minute)
+	defer lease.Close()
+	socket, err := lease.dial(context.Background(), Relay, pinnedLocalTransport(t, server))
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper, child := net.Pipe()
+	defer child.Close()
+	done := make(chan error, 1)
+	go func() { done <- socket.Bridge(helper) }()
+	if err := child.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	first, err := readFrame(child)
+	if err != nil || !bytes.Equal(first, payload) {
+		t.Fatal("transport inserted or authorized a bootstrap", err)
+	}
+	lease.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("untrusted pre-bootstrap transport did not tear down")
+	}
+}

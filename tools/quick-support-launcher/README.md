@@ -235,3 +235,16 @@ this API can launch a usable support client. No fallback to ordinary RustDesk
 startup is supplied. The synthetic lifecycle child is only the Go test binary.
 Prepared Windows tests cover authenticated dual-pipe stop/expiry, job exit and
 private-directory cleanup. Cross-compilation does not establish their execution.
+
+The native child entry point is currently blocked on an absent bootstrap delivery
+interface. `Run` passes only the two transport-pipe names and `serve` starts
+opaque bridges immediately after process-bound pipe authentication. It sends no
+signed `Receiver::from_bootstrap` payload, expected receiver/session identity or
+lease-renewal/revocation control messages. Unsolicited remote frames can therefore
+be the first framed bytes delivered to the child; they are not launcher metadata.
+`TestUnsolicitedPeerFrameIsNotLauncherBootstrap` preserves that boundary and checks
+teardown without a live endpoint. Before implementing native startup, define and
+implement the authenticated parent-to-child control/bootstrap contract, pin its
+issuer in the child, and bind it to the expected session/receiver generation.
+Keep receiver consent and privileged-packet admission mandatory after that step.
+No production issuer/signing credentials or executable startup path are added here.
