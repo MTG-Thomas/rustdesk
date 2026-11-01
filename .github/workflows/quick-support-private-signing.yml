@@ -42,7 +42,7 @@ jobs:
           if ($rules.total_count -ne 1 -or $rules.branch_policies[0].name -cne 'master' -or $rules.branch_policies[0].type -ne 'branch') { throw 'Only the master branch may sign.' }
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.10'
           cache: false
       - name: Test and build the artifact-verification test executable
         working-directory: tools/quick-support-launcher
