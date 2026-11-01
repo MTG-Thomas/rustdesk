@@ -62,6 +62,7 @@ type Lease struct {
 	expires time.Time
 	created time.Time
 	closed  bool
+	done    chan struct{}
 }
 
 func validID(id string) bool {
@@ -208,6 +209,9 @@ func (l *Lease) Close() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	clear(l.token[:])
+	if !l.closed && l.done != nil {
+		close(l.done)
+	}
 	l.closed = true
 }
 
