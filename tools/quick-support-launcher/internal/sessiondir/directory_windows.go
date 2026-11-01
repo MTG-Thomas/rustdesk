@@ -108,10 +108,10 @@ func newAt(base string) (*Directory, error) {
 	var created windows.Handle
 	// FILE_CREATE returns the fresh directory handle atomically. Never reopen or
 	// adopt an existing name, and never allow rename/delete while this handle lives.
-	if windows.NtCreateFile(&created, windows.GENERIC_READ|windows.DELETE, &attributes, &status, nil,
+	if err := windows.NtCreateFile(&created, windows.GENERIC_READ|windows.DELETE|windows.SYNCHRONIZE, &attributes, &status, nil,
 		windows.FILE_ATTRIBUTE_NORMAL, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, windows.FILE_CREATE,
-		windows.FILE_DIRECTORY_FILE|windows.FILE_SYNCHRONOUS_IO_NONALERT, 0, 0) != nil {
-		return nil, fmt.Errorf("%w: atomic-create", ErrRejected)
+		windows.FILE_DIRECTORY_FILE|windows.FILE_SYNCHRONOUS_IO_NONALERT, 0, 0); err != nil {
+		return nil, fmt.Errorf("%w: atomic-create: %v", ErrRejected, err)
 	}
 	d.handle = created
 	if !ownerOnly(d.handle, user.User.Sid) {
