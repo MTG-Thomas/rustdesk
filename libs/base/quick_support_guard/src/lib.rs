@@ -452,3 +452,6 @@ pub use control::{ControlIdentity, ControlSession};
 
 mod child;
 pub use child::ChildConnection;
+
+mod pipe;
+pub use pipe::{LocalConsent, PipeAdapter, VerifiedLaunch};

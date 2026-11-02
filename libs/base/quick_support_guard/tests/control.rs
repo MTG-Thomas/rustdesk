@@ -2,6 +2,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{Signer, SigningKey};
 use quick_support_guard::{
     proof_message, Admission, ChildConnection, ControlIdentity, ControlSession, Denied,
+    LocalConsent, PipeAdapter, VerifiedLaunch,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -293,5 +294,270 @@ fn child_teardown_is_terminal_for_expiry_invalid_frames_and_dispatch_failure() {
             })
             .is_err());
         assert!(child.parent_control(&f.renew, 1002, now).is_err());
+    }
+}
+
+struct SyntheticLaunch<'a> {
+    fixture: &'a Fixture,
+    allowed: bool,
+}
+impl VerifiedLaunch<ObservedStream, ObservedStream> for SyntheticLaunch<'_> {
+    fn verify_parent_and_config(
+        &mut self,
+        _parent: &ObservedStream,
+        _native: &ObservedStream,
+    ) -> Result<(ControlIdentity, String), Denied> {
+        if !self.allowed {
+            return Err(Denied);
+        }
+        Ok((
+            identity(self.fixture),
+            "01234567890123456789012345678901".into(),
+        ))
+    }
+}
+struct SyntheticConsent(bool);
+impl LocalConsent for SyntheticConsent {
+    fn receiver_approved(&mut self) -> Result<(), Denied> {
+        if self.0 {
+            Ok(())
+        } else {
+            Err(Denied)
+        }
+    }
+}
+struct ObservedStream {
+    bytes: std::io::Cursor<Vec<u8>>,
+    drops: std::rc::Rc<std::cell::Cell<usize>>,
+    reads: std::rc::Rc<std::cell::Cell<usize>>,
+}
+impl std::io::Read for ObservedStream {
+    fn read(&mut self, target: &mut [u8]) -> std::io::Result<usize> {
+        self.reads.set(self.reads.get() + 1);
+        // Fragment even headers into individual bytes, like a byte-mode pipe.
+        let count = target.len().min(1);
+        std::io::Read::read(&mut self.bytes, &mut target[..count])
+    }
+}
+impl Drop for ObservedStream {
+    fn drop(&mut self) {
+        self.drops.set(self.drops.get() + 1);
+    }
+}
+fn observed(
+    bytes: Vec<u8>,
+    drops: &std::rc::Rc<std::cell::Cell<usize>>,
+    reads: &std::rc::Rc<std::cell::Cell<usize>>,
+) -> ObservedStream {
+    ObservedStream {
+        bytes: std::io::Cursor::new(bytes),
+        drops: drops.clone(),
+        reads: reads.clone(),
+    }
+}
+fn control_frame(token: &str) -> Vec<u8> {
+    let mut frame = (token.len() as u32).to_be_bytes().to_vec();
+    frame.extend_from_slice(token.as_bytes());
+    frame
+}
+fn admit_pipe(
+    adapter: &mut PipeAdapter<ObservedStream, ObservedStream>,
+    f: &Fixture,
+    start: Instant,
+) {
+    adapter.parent_control(|| (1000, start)).unwrap();
+    let proof = SigningKey::from_bytes(&[9; 32])
+        .sign(&proof_message(&f.grant, "01234567890123456789012345678901", &f.receiver_id).unwrap())
+        .to_bytes();
+    adapter
+        .request(&f.grant, &proof, 1001, start + Duration::from_secs(1))
+        .unwrap();
+    adapter
+        .approve_locally(&mut SyntheticConsent(true), || {
+            start + Duration::from_secs(1)
+        })
+        .unwrap();
+}
+#[test]
+fn pipe_adapter_verifies_launch_before_read_and_requires_separate_local_consent() {
+    let f = fixture();
+    let start = Instant::now();
+    let drops = std::rc::Rc::new(std::cell::Cell::new(0));
+    let reads = std::rc::Rc::new(std::cell::Cell::new(0));
+    assert!(PipeAdapter::new(
+        observed(vec![], &drops, &reads),
+        observed(vec![], &drops, &reads),
+        &mut SyntheticLaunch {
+            fixture: &f,
+            allowed: false
+        }
+    )
+    .is_err());
+    assert_eq!(reads.get(), 0);
+    assert_eq!(drops.get(), 2);
+    let mut adapter = PipeAdapter::new(
+        observed(control_frame(&f.bootstrap), &drops, &reads),
+        observed(vec![4, 7], &drops, &reads),
+        &mut SyntheticLaunch {
+            fixture: &f,
+            allowed: true,
+        },
+    )
+    .unwrap();
+    adapter.parent_control(|| (1000, start)).unwrap();
+    assert!(adapter
+        .approve_locally(&mut SyntheticConsent(false), || start)
+        .is_err());
+    assert_eq!(drops.get(), 4);
+    assert!(adapter
+        .dispatch_next(
+            || start,
+            |_| -> Result<(), Denied> { panic!("consent denial dispatched") }
+        )
+        .is_err());
+}
+#[test]
+fn pipe_adapter_fragmented_frames_revocation_eof_and_exit_close_both_streams() {
+    let f = fixture();
+    let start = Instant::now();
+    for ending in 0..5 {
+        let drops = std::rc::Rc::new(std::cell::Cell::new(0));
+        let reads = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut parent = control_frame(&f.bootstrap);
+        if ending != 4 {
+            parent.extend(control_frame(&f.renew));
+            parent.extend(control_frame(&f.revoke));
+        }
+        // A fragmented two-byte header followed by a second complete frame.
+        let mut native = vec![1, 1];
+        native.extend([7; 64]);
+        native.extend([4, 3]);
+        let mut adapter = PipeAdapter::new(
+            observed(parent, &drops, &reads),
+            observed(native, &drops, &reads),
+            &mut SyntheticLaunch {
+                fixture: &f,
+                allowed: true,
+            },
+        )
+        .unwrap();
+        admit_pipe(&mut adapter, &f, start);
+        assert_eq!(
+            adapter
+                .dispatch_next(|| start + Duration::from_secs(1), |p| Ok(p.to_vec()))
+                .unwrap(),
+            [7; 64]
+        );
+        match ending {
+            0 => {
+                adapter
+                    .parent_control(|| (1002, start + Duration::from_secs(2)))
+                    .unwrap();
+                adapter
+                    .parent_control(|| (1003, start + Duration::from_secs(3)))
+                    .unwrap();
+                assert_eq!(drops.get(), 2, "revoke drops streams before another read");
+            }
+            1 => {
+                adapter.stop();
+            } // Injected child exit/cancellation.
+            2 => {
+                assert!(adapter
+                    .dispatch_next(
+                        || start + Duration::from_secs(60),
+                        |_| -> Result<(), Denied> { panic!("expired during read") }
+                    )
+                    .is_err());
+            }
+            3 => {
+                assert_eq!(
+                    adapter
+                        .dispatch_next(|| start + Duration::from_secs(1), |p| Ok(p.to_vec()))
+                        .unwrap(),
+                    [3]
+                );
+                assert!(adapter
+                    .dispatch_next(
+                        || start,
+                        |_| -> Result<(), Denied> { panic!("EOF dispatched") }
+                    )
+                    .is_err());
+            }
+            _ => {
+                assert!(adapter
+                    .parent_control(|| (1002, start + Duration::from_secs(2)))
+                    .is_err());
+            }
+        }
+        assert!(adapter
+            .dispatch_next(
+                || start,
+                |_| -> Result<(), Denied> { panic!("terminal pipe reopened") }
+            )
+            .is_err());
+        assert_eq!(drops.get(), 2);
+        assert!(adapter
+            .approve_locally(&mut SyntheticConsent(true), || start)
+            .is_err());
+    }
+}
+#[test]
+fn pipe_adapter_malformed_truncated_oversized_and_replayed_controls_fail_closed() {
+    let f = fixture();
+    let start = Instant::now();
+    let mut replay = control_frame(&f.bootstrap);
+    replay.extend(control_frame(&f.bootstrap));
+    let mut mismatch = control_frame(&resign(&f.bootstrap, |v| v["session_id"] = "other".into()));
+    mismatch.extend(control_frame(&f.bootstrap));
+    let mut bad_utf8 = 1u32.to_be_bytes().to_vec();
+    bad_utf8.push(255);
+    for (parent, first_ok) in [
+        (vec![], false),
+        (vec![0, 0], false),
+        (vec![0, 0, 0, 0], false),
+        (vec![0, 0, 64, 1], false),
+        (vec![0, 0, 0, 2, 65], false),
+        (bad_utf8, false),
+        (replay, true),
+        (mismatch, false),
+    ] {
+        let drops = std::rc::Rc::new(std::cell::Cell::new(0));
+        let reads = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut adapter = PipeAdapter::new(
+            observed(parent, &drops, &reads),
+            observed(vec![4, 1], &drops, &reads),
+            &mut SyntheticLaunch {
+                fixture: &f,
+                allowed: true,
+            },
+        )
+        .unwrap();
+        if first_ok {
+            adapter.parent_control(|| (1000, start)).unwrap();
+        }
+        assert!(adapter.parent_control(|| (1000, start)).is_err());
+        assert_eq!(drops.get(), 2);
+        assert!(adapter.parent_control(|| (1000, start)).is_err());
+    }
+    for native in [vec![], vec![1], vec![8, 1], vec![0], vec![7, 0, 0, 1]] {
+        let drops = std::rc::Rc::new(std::cell::Cell::new(0));
+        let reads = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut adapter = PipeAdapter::new(
+            observed(control_frame(&f.bootstrap), &drops, &reads),
+            observed(native, &drops, &reads),
+            &mut SyntheticLaunch {
+                fixture: &f,
+                allowed: true,
+            },
+        )
+        .unwrap();
+        admit_pipe(&mut adapter, &f, start);
+        assert!(adapter
+            .dispatch_next(
+                || start + Duration::from_secs(1),
+                |_| -> Result<(), Denied> { panic!("invalid native frame dispatched") }
+            )
+            .is_err());
+        assert_eq!(drops.get(), 2);
     }
 }
