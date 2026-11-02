@@ -224,6 +224,10 @@ impl ControlSession {
             .as_ref()
             .is_some_and(|receiver| admission.can_control(receiver, monotonic))
     }
+    pub(crate) fn is_stopped(&self) -> bool {
+        self.stopped
+    }
+
     pub fn stop(&mut self) {
         self.stopped = true;
         if let Some(receiver) = self.receiver.as_mut() {

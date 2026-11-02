@@ -72,6 +72,10 @@ impl ChildConnection {
         result
     }
 
+    pub(crate) fn is_stopped(&self) -> bool {
+        self.control.is_stopped()
+    }
+
     /// Rejection, disconnect, control EOF, callback failure and local stop all
     /// require transport/process teardown by the owner after this latch closes.
     pub fn stop(&mut self) {
