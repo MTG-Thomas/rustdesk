@@ -171,3 +171,27 @@ Regression surface: `lib.rs` adds exports; `control.rs` and `child.rs` add
 crate-private terminal-state observations so a valid revoke closes streams
 without awaiting another packet. Existing admission/verification behavior is
 unchanged. No dependencies, submodules, permissions or security gates change.
+
+
+## Desktop startup integration boundary
+
+The real desktop `core_main` now rejects `--quick-support-private-pipes` before
+`global_init`, custom-client loading, Windows bootstrap, argument processing or
+GUI/server startup. A malformed/incomplete private launch also exits; it never
+falls back to the ordinary installed-client path. Ordinary invocations retain
+the existing startup path. This refusal is deliberately not a working receiver
+entry point and does not open pipes or infer approval.
+
+The desktop package declares Rust 1.75; this separately qualified guard declares
+Rust 1.90. Linking it directly into the desktop dependency graph requires an
+explicit build/toolchain compatibility decision and a complete desktop build.
+No application toolchain or dependency contract is changed here. Beyond that
+build boundary, a functional entry point requires retained-parent verification,
+authenticated configuration and a separate control pipe, then receiver-local UI
+approval/stop callbacks and cancellable native I/O. The current launcher only
+supplies two opaque transport pipes. None can be repurposed as trust or consent.
+
+Regression surface: `core_main.rs` adds one early private-invocation refusal;
+`lib.rs` registers its dependency-free parser. No normal startup path changes.
+The guard test suite imports that exact parser source; it does not prove a
+complete application build or Windows execution of `core_main`.
