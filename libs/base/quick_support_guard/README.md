@@ -53,10 +53,15 @@ fails closed; reissuing a generation is a control-plane action.
 - Reject startup when signed configuration or isolated IPC is unavailable.
   Do not silently fall back to ordinary RustDesk behavior.
 
-The separate crate uses Rust 1.90 and its own checked-in lockfile for this
-spike. It does not change the ordinary RustDesk package's Rust 1.75 declaration.
-A feature build's compiler and complete dependency audit must be qualified
-before integrating it into the application release.
+The separate crate now shares the desktop Rust 1.75 minimum. Its checked-in
+lockfile selects Ed25519 Dalek 2.1.1 (MSRV 1.60), UUID 1.18.1 (MSRV 1.63),
+zeroize 1.8.2 and base64ct 1.6.0 (MSRV 1.60). The former selected Dalek 2.2.0
+required Rust 1.81; UUID 1.27.0 required 1.89; zeroize 1.9.1 and base64ct
+1.8.3 required 1.85/edition 2024. No verifier or admission logic changes.
+CI runs the locked authorization/control tests with Rust 1.75 and retains
+Rust 1.90 for formatting, diagnostics and audit. A complete desktop dependency
+graph/build still needs separate qualification when the guard is linked; this
+standalone check is not application or Windows runtime acceptance.
 
 ## Verification
 
@@ -64,7 +69,8 @@ From this directory, use Rust 1.90:
 
 ```sh
 cargo fmt --all --check
-cargo test --locked
+cargo +1.75.0 test --locked
+cargo +1.90.0 test --locked
 cargo clippy --locked --all-targets -- -D warnings
 cargo audit --file Cargo.lock
 ```
