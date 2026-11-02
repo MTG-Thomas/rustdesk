@@ -438,3 +438,50 @@ fn admission_closed_before_login_never_consumes_or_accepts_a_grant() {
         .authorize(&token, &proof, CHALLENGE, 1000, f.start)
         .is_ok());
 }
+
+#[test]
+fn signed_bootstrap_must_match_independently_authenticated_launch() {
+    let f = Fixture::new();
+    let bootstrap = Bootstrap {
+        iss: "https://support.example.test".into(),
+        aud: AUDIENCE.into(),
+        session_id: SESSION.into(),
+        generation: GENERATION.into(),
+        receiver_id: "123456789".into(),
+        technician_id: TECHNICIAN.into(),
+        workstation_key: URL_SAFE_NO_PAD.encode(f.workstation.verifying_key().to_bytes()),
+        iat: 1000,
+        exp: 87400,
+    };
+    let token = sign(&bootstrap, &f.issuer);
+    let pinned = f.issuer.verifying_key().to_bytes();
+    for (session_id, generation, receiver_id, allowed) in [
+        (SESSION, GENERATION, "123456789", true),
+        (TECHNICIAN, GENERATION, "123456789", false),
+        (SESSION, TECHNICIAN, "123456789", false),
+        (SESSION, GENERATION, "987654321", false),
+    ] {
+        let result = Receiver::from_bound_bootstrap(
+            &token,
+            "https://support.example.test",
+            &pinned,
+            quick_support_guard::BootstrapBinding {
+                session_id,
+                generation,
+                receiver_id,
+            },
+            1000,
+            f.start,
+        );
+        assert_eq!(result.is_ok(), allowed);
+        if let Ok(receiver) = result {
+            assert!(
+                !receiver.active(f.start),
+                "bootstrap alone activated receiver"
+            );
+            let mut admission = quick_support_guard::Admission::new(CHALLENGE.into()).unwrap();
+            assert!(admission.approve_locally(&receiver, f.start).is_err());
+            assert!(!admission.can_control(&receiver, f.start));
+        }
+    }
+}

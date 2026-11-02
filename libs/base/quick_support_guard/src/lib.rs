@@ -167,7 +167,35 @@ pub struct ReceiverIdentity {
     pub hard_expiry: u64,
 }
 
+/// Independently authenticated launch identity. Never derive this from the
+/// bootstrap being checked, transport frames, or a customer-controlled URL.
+pub struct BootstrapBinding<'a> {
+    pub session_id: &'a str,
+    pub generation: &'a str,
+    pub receiver_id: &'a str,
+}
+
 impl Receiver {
+    /// Bind the signed bootstrap to its intended launch before accepting leases
+    /// or opening a consent prompt. This is not a persistent replay registry.
+    pub fn from_bound_bootstrap(
+        token: &str,
+        pinned_issuer: &str,
+        pinned_key: &[u8; 32],
+        expected: BootstrapBinding<'_>,
+        now: u64,
+        monotonic: Instant,
+    ) -> Result<Self, Denied> {
+        let receiver = Self::from_bootstrap(token, pinned_issuer, pinned_key, now, monotonic)?;
+        if receiver.session_id != expected.session_id
+            || receiver.generation != expected.generation
+            || receiver.receiver_id != expected.receiver_id
+        {
+            return Err(Denied);
+        }
+        Ok(receiver)
+    }
+
     /// The issuer URL and verification key must come from the signed application,
     /// not from the customer link or downloaded configuration.
     pub fn from_bootstrap(
