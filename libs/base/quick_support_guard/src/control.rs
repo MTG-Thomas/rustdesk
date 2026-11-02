@@ -228,6 +228,14 @@ impl ControlSession {
         self.stopped
     }
 
+    pub(crate) fn active(&self, now: Instant) -> bool {
+        !self.stopped
+            && self
+                .receiver
+                .as_ref()
+                .is_some_and(|receiver| receiver.active(now))
+    }
+
     pub fn stop(&mut self) {
         self.stopped = true;
         if let Some(receiver) = self.receiver.as_mut() {

@@ -76,6 +76,14 @@ impl ChildConnection {
         self.control.is_stopped()
     }
 
+    pub(crate) fn check_lease(&mut self, now: Instant) -> Result<(), Denied> {
+        if !self.control.active(now) {
+            self.stop();
+            return Err(Denied);
+        }
+        Ok(())
+    }
+
     /// Rejection, disconnect, control EOF, callback failure and local stop all
     /// require transport/process teardown by the owner after this latch closes.
     pub fn stop(&mut self) {

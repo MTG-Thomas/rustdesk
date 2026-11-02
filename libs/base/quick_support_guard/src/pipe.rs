@@ -122,6 +122,12 @@ impl<P: Read, N: Read> PipeAdapter<P, N> {
         self.streams.take();
     }
 
+    /// Called by the independent application timer even while consent is pending.
+    pub fn check_lease(&mut self, now: Instant) -> Result<(), Denied> {
+        let result = self.child.check_lease(now);
+        self.finish(result)
+    }
+
     fn finish<T>(&mut self, result: Result<T, Denied>) -> Result<T, Denied> {
         if result.is_err() || self.child.is_stopped() {
             self.stop();
