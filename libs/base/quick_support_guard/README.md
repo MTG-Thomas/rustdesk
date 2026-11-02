@@ -22,8 +22,10 @@ fails closed; reissuing a generation is a control-plane action.
 
 - Pin the expected issuer URL and public key in the signed application. Never
   accept a key or issuer supplied by the customer link or local manifest.
-- Initialize with `Receiver::from_bootstrap`; `Receiver::new` is a low-level API
-  for already authenticated settings and the test fixture.
+- Initialize with `Receiver::from_bound_bootstrap`, supplying the independently
+  authenticated expected session, receiver and generation. Never copy that binding
+  from the token being checked. `from_bootstrap` and `new` remain low-level APIs.
+  This binding is not a persistent generation replay registry or an issuer source.
 - Generate each connection's challenge using the OS CSPRNG. Length validation
   alone cannot prove that a challenge is random or unique.
 - Hold a single receiver state across connections to enforce one-use grants.
