@@ -449,3 +449,6 @@ impl Admission {
 
 mod control;
 pub use control::{ControlIdentity, ControlSession};
+
+mod child;
+pub use child::ChildConnection;
