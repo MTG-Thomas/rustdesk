@@ -73,3 +73,31 @@ Current focused checks prove the public verifier and admission-state behavior.
 They do not establish Authenticode trust, customer UI, Windows isolation,
 elevation, launcher cleanup or live transport interoperability. No existing
 RustDesk source file or runtime path has been changed in this first component.
+
+## Source-only Worker control contract
+
+`ControlSession` verifies the separate `rd-qs-control+jwt` envelope before
+accepting its nested bootstrap or lease. Its constructor requires independently
+trusted issuer/key and organization, install, session, generation and receiver
+identity; none may come from the token under validation. Exact consecutive
+sequences, short validity, matching nested claims and monotonic lease expiry
+reject replay and reactivation. Local stop and authenticated revocation are
+terminal. Grants still require workstation proof and receiver-local approval.
+
+The JSON fixture in `tests/fixtures/receiver-control-v1.json` is emitted by the
+actual workspace Worker issuer test, `exports synthetic Worker envelopes for
+the native verifier contract`, in `bifrost-workspace-next`. Its seed-7 issuer,
+seed-9 workstation and expired timestamps are public synthetic test material.
+Keep the two repositories' fixture bytes identical; regenerate with the Worker
+test before copying, rather than generating an independent Rust approximation.
+
+This API has no application startup hook. It does not authenticate a pipe peer,
+deliver a control channel, close transports or persist generation replay state
+across process restart. A future caller must obtain launch identity from trusted
+bootstrap, preserve the issuer's generation authority, authenticate the private
+pipe peer before accepting control and gate every privileged frame on admission.
+Neither a control token nor an authenticated transport implies customer consent.
+No issuer key provisioning, runtime activation or device acceptance is included.
+
+Regression surface: the existing `src/lib.rs` only adds module exports; existing
+verifier/admission paths and ordinary RustDesk startup remain unchanged.
