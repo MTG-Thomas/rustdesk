@@ -101,3 +101,37 @@ No issuer key provisioning, runtime activation or device acceptance is included.
 
 Regression surface: the existing `src/lib.rs` only adds module exports; existing
 verifier/admission paths and ordinary RustDesk startup remain unchanged.
+
+## Child connection dispatch contract
+
+`ChildConnection` composes the control verifier and one admission into a private
+connection boundary. Parent controls, workstation requests and receiver-local
+approval have separate methods; peer frame bytes are never decoded as control
+or UI events. Dispatch receives exactly one complete, nonempty RustDesk
+BytesCodec frame with a 4 MiB payload limit. It invokes its callback only after
+an active lease, verified workstation grant and local approval. The caller must
+classify allowed packet capabilities before its actual privileged handler.
+
+Control failure, grant failure, malformed/premature/expired privileged traffic,
+dispatch failure, explicit rejection/stop and disconnect must close the latch.
+`stop` is terminal; the owner must then close both native streams, cancel the
+transport lease, terminate the contained child and finish bounded cleanup. The
+Rust latch cannot by itself perform that Go/Windows teardown. No buffered packet
+may be retried on a replacement connection or delivered after a consent prompt.
+
+### Remaining integration prerequisites
+
+| Boundary | Existing evidence | Missing before application wiring/activation |
+| --- | --- | --- |
+| Issuer trust and launch identity | Worker source issuer and Rust signed vectors | Signed application-pinned public trust and independently authenticated org/install/session/generation/receiver configuration; no production issuer key is provisioned |
+| Parent and child process | Go privateipc pins retained process handles and checks both peers; Windows fixtures | Rust child adapter must receive trusted retained parent identity, verify its pipe server before any payload, and bind to the launcher's created child; command-line PID or pipe name alone is insufficient |
+| Control delivery | Typed signed control verification with exact sequence and terminal revocation | Separate authenticated control channel; current two Go pipes carry opaque native peer traffic and must never supply bootstrap authority |
+| Consent | Executable guard/dispatcher tests require a distinct receiver-local approval event | Isolated real customer UI event binding and denial/stop callbacks; transport connection or issuer grant cannot stand in for consent |
+| Native application | Complete-frame gate tested with synthetic callbacks | RustDesk startup adapter, login and capability dispatch hooks, bounded expiry timer, both-route EOF and process teardown wiring; no legacy fallback |
+| Generation restart | Durable issuer generation/tombstone source contract | Trusted launch/restart reconciliation before reusing a process or generation; no receiver persistent authority created here |
+| Acceptance and rollback | Existing helper Windows CI and source-level tests | New-head CI, reviewed integration, signed release, then separately authorized isolated device acceptance; activation remains disabled and rejection must roll back to no running child/transport |
+
+No RustDesk startup, UI, shared submodule or legacy runtime path is modified by
+this dispatcher. The only existing production file change adds module exports.
+Synthetic callbacks prove dispatch suppression, not actual Windows execution,
+UI authenticity, device acceptance or an authorized real remote-control session.
