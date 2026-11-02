@@ -136,6 +136,42 @@ this dispatcher. The only existing production file change adds module exports.
 Synthetic callbacks prove dispatch suppression, not actual Windows execution,
 UI authenticity, device acceptance or an authorized real remote-control session.
 
+## Offline pipe/framing adapter
+
+`PipeAdapter` owns separate parent-control and native `Read` streams. Its injected
+`VerifiedLaunch<P, N>` must verify the actual supplied stream handles against the
+retained parent process and trusted signed configuration before any read; there
+is no default trust implementation. `LocalConsent` is a distinct injected local
+event source. Tests explicitly implement both using synthetic fixtures. These
+traits establish interface requirements, not Windows authentication or UI trust.
+
+The isolated parent framing contract is a four-byte big-endian length followed
+by one UTF-8 control JWS, bounded at 16 KiB. Native traffic uses RustDesk's
+little-endian BytesCodec header, bounded at 4 MiB. Header-declared sizes are
+checked before reading payload, which grows only in received 8 KiB chunks.
+Each call consumes one frame and leaves later frames for separate authorization.
+Clocks are sampled after reads and local callbacks, so blocked input cannot
+reuse an earlier lease timestamp. An invalid frame/control, EOF, callback denial,
+explicit child-exit/stop or Drop closes authorization and drops both streams;
+a valid terminal revoke also drops streams immediately.
+
+This is synchronous offline adapter code, not an application event loop.
+Production integration still requires owned cancellable/deadline-bound pipe
+handles, an independently scheduled expiry/control loop that cannot be starved
+by a blocked native read, retained-parent peer verification for both streams,
+trusted configuration/challenge delivery and an isolated real consent source.
+`Read` alone cannot guarantee that dropping a generic stream closes an OS handle
+or interrupts an outstanding read. The owner must connect exit/cancel events to
+`stop`, close routes, terminate the Job Object and verify bounded cleanup.
+No launcher pipe protocol, RustDesk entry point, existing startup or production
+configuration is connected by this source-only component. All runtime and device
+acceptance gates above remain open.
+
+Regression surface: `lib.rs` adds exports; `control.rs` and `child.rs` add
+crate-private terminal-state observations so a valid revoke closes streams
+without awaiting another packet. Existing admission/verification behavior is
+unchanged. No dependencies, submodules, permissions or security gates change.
+
 
 ## Desktop startup integration boundary
 
