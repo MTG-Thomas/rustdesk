@@ -301,11 +301,11 @@ struct SyntheticLaunch<'a> {
     fixture: &'a Fixture,
     allowed: bool,
 }
-impl VerifiedLaunch<ObservedStream, ObservedStream> for SyntheticLaunch<'_> {
+impl<P, N> VerifiedLaunch<P, N> for SyntheticLaunch<'_> {
     fn verify_parent_and_config(
         &mut self,
-        _parent: &ObservedStream,
-        _native: &ObservedStream,
+        _parent: &P,
+        _native: &N,
     ) -> Result<(ControlIdentity, String), Denied> {
         if !self.allowed {
             return Err(Denied);
@@ -360,8 +360,8 @@ fn control_frame(token: &str) -> Vec<u8> {
     frame.extend_from_slice(token.as_bytes());
     frame
 }
-fn admit_pipe(
-    adapter: &mut PipeAdapter<ObservedStream, ObservedStream>,
+fn admit_pipe<P: std::io::Read, N: std::io::Read>(
+    adapter: &mut PipeAdapter<P, N>,
     f: &Fixture,
     start: Instant,
 ) {
@@ -558,6 +558,82 @@ fn pipe_adapter_malformed_truncated_oversized_and_replayed_controls_fail_closed(
                 |_| -> Result<(), Denied> { panic!("invalid native frame dispatched") }
             )
             .is_err());
+        assert_eq!(drops.get(), 2);
+    }
+}
+
+struct FaultStream {
+    inner: ObservedStream,
+    interrupt_once: bool,
+    fail_after: Option<usize>,
+    failure: std::io::ErrorKind,
+    received: usize,
+}
+impl std::io::Read for FaultStream {
+    fn read(&mut self, target: &mut [u8]) -> std::io::Result<usize> {
+        if self.interrupt_once {
+            self.interrupt_once = false;
+            return Err(std::io::ErrorKind::Interrupted.into());
+        }
+        if self.fail_after.is_some_and(|limit| self.received >= limit) {
+            return Err(self.failure.into());
+        }
+        let count = std::io::Read::read(&mut self.inner, target)?;
+        self.received += count;
+        Ok(count)
+    }
+}
+
+#[test]
+fn pipe_adapter_retries_interruption_but_never_resumes_failed_partial_input() {
+    let f = fixture();
+    let start = Instant::now();
+    for fault in [
+        None,
+        Some(std::io::ErrorKind::BrokenPipe),
+        Some(std::io::ErrorKind::TimedOut),
+        Some(std::io::ErrorKind::WouldBlock),
+    ] {
+        let drops = std::rc::Rc::new(std::cell::Cell::new(0));
+        let reads = std::rc::Rc::new(std::cell::Cell::new(0));
+        let native = FaultStream {
+            inner: observed(vec![8, 5, 6], &drops, &reads),
+            interrupt_once: true,
+            fail_after: fault.map(|_| 2),
+            failure: fault.unwrap_or(std::io::ErrorKind::BrokenPipe),
+            received: 0,
+        };
+        let mut adapter = PipeAdapter::new(
+            observed(control_frame(&f.bootstrap), &drops, &reads),
+            native,
+            &mut SyntheticLaunch {
+                fixture: &f,
+                allowed: true,
+            },
+        )
+        .unwrap();
+        admit_pipe(&mut adapter, &f, start);
+        let mut dispatched = false;
+        let result = adapter.dispatch_next(
+            || start + Duration::from_secs(1),
+            |payload| {
+                dispatched = true;
+                assert_eq!(payload, [5, 6]);
+                Ok(())
+            },
+        );
+        assert_eq!(result.is_ok(), fault.is_none());
+        assert_eq!(dispatched, fault.is_none());
+        if fault.is_some() {
+            assert_eq!(drops.get(), 2);
+            assert!(adapter
+                .dispatch_next(
+                    || start,
+                    |_| -> Result<(), Denied> { panic!("partial input resumed after failure") }
+                )
+                .is_err());
+        }
+        drop(adapter);
         assert_eq!(drops.get(), 2);
     }
 }
