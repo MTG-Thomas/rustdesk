@@ -188,11 +188,10 @@ falls back to the ordinary installed-client path. Ordinary invocations retain
 the existing startup path. This refusal is deliberately not a working receiver
 entry point and does not open pipes or infer approval.
 
-The desktop package declares Rust 1.75; this separately qualified guard declares
-Rust 1.90. Linking it directly into the desktop dependency graph requires an
-explicit build/toolchain compatibility decision and a complete desktop build.
-No application toolchain or dependency contract is changed here. Beyond that
-build boundary, a functional entry point requires retained-parent verification,
+The desktop package and separately qualified guard both declare Rust 1.75.
+Linking the guard still requires qualification of the complete desktop dependency
+graph and build. No application toolchain is raised. Beyond that build boundary,
+a functional entry point requires retained-parent verification,
 authenticated configuration and a separate control pipe, then receiver-local UI
 approval/stop callbacks and cancellable native I/O. The current launcher only
 supplies two opaque transport pipes. None can be repurposed as trust or consent.
