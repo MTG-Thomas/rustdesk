@@ -78,6 +78,13 @@ impl<C> ParentLaunch<C> {
         }
     }
 
+    pub fn with_configuration<D>(self, configuration: D) -> ParentLaunch<D> {
+        ParentLaunch {
+            parent: self.parent,
+            configuration,
+        }
+    }
+
     /// Consume only a candidate handle identifier. Actual peer/configuration
     /// authentication still happens inside the adapter before payload reads.
     /// `authenticate` must establish the expected trusted launch origin using

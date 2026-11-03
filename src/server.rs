@@ -1042,9 +1042,7 @@ pub async fn run_quick_support_inherited(
     paths: (&str, &str),
     bounds: (std::time::Instant, Arc<std::sync::atomic::AtomicBool>),
     origin: crate::quick_support_child::windows_parent::origin::ParentTrust,
-    mut configuration: impl FnMut() -> Result<quick_support_guard::ControlIdentity, quick_support_guard::Denied>
-        + Send
-        + 'static,
+    configuration: quick_support_guard::LaunchTrust,
 ) -> ResultType<()> {
     use crate::quick_support_child::windows_parent::{bounded_pipe::CancellablePipe, ParentLaunch};
     if paths.0 == paths.1 {
@@ -1059,14 +1057,16 @@ pub async fn run_quick_support_inherited(
             |parent| {
                 crate::quick_support_child::windows_parent::origin::verify_parent(parent, &origin)
             },
-            move || {
-                Ok((
-                    configuration()?,
-                    crate::quick_support_receiver::fresh_challenge()?,
-                ))
-            },
+            (),
         )?;
         crate::quick_support_child::windows_parent::profile::install_after_parent_verification()?;
+        let identity =
+            crate::quick_support_child::windows_parent::profile::load_launch_configuration(
+                configuration,
+            )?;
+        let mut prepared = Some((identity, crate::quick_support_receiver::fresh_challenge()?));
+        let launch =
+            launch.with_configuration(move || prepared.take().ok_or(quick_support_guard::Denied));
         let control = CancellablePipe::connect(&paths.0, bounds.0, cancelled.clone())?;
         let native = CancellablePipe::connect(&paths.1, bounds.0, cancelled)?;
         Ok::<_, quick_support_guard::Denied>((control, native, launch))

@@ -877,6 +877,7 @@ fn receiver_interop_child() {
     let steps = Cell::new(0usize);
     let dispatched = Cell::new(0usize);
     let parent = RefCell::new(None::<OwnedHandle>);
+    let configuration = RefCell::new(None::<ControlIdentity>);
     let rendezvous = RefCell::new(None::<LocalPipe>);
     let result = run_inherited(
         (&input.control, &input.relay),
@@ -893,6 +894,19 @@ fn receiver_interop_child() {
                     input.parent_pid
                 );
                 desktop_child::windows_parent::profile::install_after_parent_verification()?;
+                let pins = identity(&f);
+                let scope = desktop_child::windows_parent::profile::load_launch_configuration(
+                    quick_support_guard::LaunchTrust {
+                        issuer: pins.issuer,
+                        issuer_key: pins.issuer_key,
+                        organization_id: pins.organization_id,
+                        solution_id: pins.solution_id,
+                    },
+                )?;
+                assert_eq!(scope.session_id, f.session_id);
+                assert_eq!(scope.generation, f.generation);
+                assert_eq!(scope.receiver_id, f.receiver_id);
+                configuration.replace(Some(scope));
                 parent.replace(Some(handle.try_clone_to_owned().unwrap()));
                 Ok(())
             },
@@ -901,12 +915,14 @@ fn receiver_interop_child() {
                 let retained = retained.as_ref().unwrap();
                 let pipe = LocalPipe::connect(&input.rendezvous)?;
                 let mut launch =
-                    ParentLaunch::new(retained.as_handle().try_clone_to_owned().unwrap(), || {
-                        Ok((identity(&f), challenge.to_owned()))
-                    });
+                    ParentLaunch::new(retained.as_handle().try_clone_to_owned().unwrap(), ())
+                        .with_configuration(|| Ok((identity(&f), challenge.to_owned())));
                 launch.verify_parent_and_config(&pipe, &pipe)?;
                 rendezvous.replace(Some(pipe));
-                Ok((identity(&f), challenge.to_owned()))
+                Ok((
+                    configuration.borrow_mut().take().ok_or(Denied)?,
+                    challenge.to_owned(),
+                ))
             },
         ),
         &mut SyntheticConsent(input.allow_consent),

@@ -348,3 +348,31 @@ host cleanup joins it outside the async loop. Ordinary client authentication,
 installed Connection Manager IPC, public signatures, dependency locks and CI
 permissions/matrices remain unchanged. Signed startup/profile verification and
 release/dependency/security gates are still outstanding before activation.
+
+## Signed launch identity before server creation
+
+The optional inherited entry now requires a release-pinned launch issuer/public
+key and organization/install scope instead of a caller-provided identity callback.
+After parent-origin and profile validation, it reads only `receiver-launch.jwt`
+from the pinned directory, rejects non-regular/reparse/oversized/invalid UTF-8
+files, verifies a distinct `rd-qs-launch+jwt` signature and profile nonce, then
+constructs the server. The prepared identity is consumed once and separately
+compared with subsequent control tokens. Missing configuration fails closed.
+
+The existing unwired Worker receiver issuer signs at most one launch for a live,
+exactly matched generation and fresh launcher profile nonce, with expiry bounded
+by 60 seconds and the active lease. Its durable marker survives recreation and
+concurrent attempts. No signing identity, route or real credential is created.
+The launcher source entry requires an authoritative configuration callback and
+writes the bounded token with exclusive creation after artifact verification.
+Its callback has no implementation that fabricates session/role/consent authority.
+
+The exact synthetic Worker JWS is a native verifier fixture. Native contract tests
+cover purpose/scope/nonce/signature/expiry/replay denial. The existing Windows
+Go/Rust fixture signs a current synthetic launch using its existing test issuer,
+passes the real pinned directory handle, and exercises the child file verifier
+before its independent bootstrap, grant, consent and revocation assertions.
+Native Windows execution remains CI evidence to collect. Production release pins,
+the authenticated Provider/session-authority adapter and registration, actual
+startup routing, public release signing and full device acceptance remain open.
+Default startup and remote control are still disabled.

@@ -2,6 +2,7 @@
 use quick_support_guard::Denied;
 use std::{
     fs::{File, OpenOptions},
+    io::Read,
     os::windows::{
         fs::OpenOptionsExt,
         io::{AsRawHandle, FromRawHandle, OwnedHandle},
@@ -45,6 +46,42 @@ pub fn install_after_parent_verification() -> Result<(), Denied> {
     hbb_common::private_profile::install(pin.root.clone(), pin.nonce.clone())
         .map_err(|_| Denied)?;
     PIN.set(pin).map_err(|_| Denied)
+}
+
+/// Load only the fixed file in the pinned private profile. Issuer/install pins
+/// are supplied by the signed release, never by this document or parent input.
+pub fn load_launch_configuration(
+    trust: quick_support_guard::LaunchTrust,
+) -> Result<quick_support_guard::ControlIdentity, Denied> {
+    use std::os::windows::fs::MetadataExt;
+    let pin = PIN.get().ok_or(Denied)?;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ.0)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
+        .open(pin.root.join("receiver-launch.jwt"))
+        .map_err(|_| Denied)?;
+    let metadata = file.metadata().map_err(|_| Denied)?;
+    if !metadata.is_file()
+        || metadata.file_attributes() & 0x400 != 0
+        || metadata.len() == 0
+        || metadata.len() > 4096
+    {
+        return Err(Denied);
+    }
+    let mut token = String::new();
+    file.by_ref()
+        .take(4097)
+        .read_to_string(&mut token)
+        .map_err(|_| Denied)?;
+    if token.len() > 4096 {
+        return Err(Denied);
+    }
+    let wall = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| Denied)?
+        .as_secs();
+    quick_support_guard::LaunchVerifier::new(trust, pin.nonce.clone())?.verify(&token, wall)
 }
 
 impl ProfilePin {
@@ -418,6 +455,19 @@ mod tests {
         advertise(&handle);
         install_after_parent_verification().unwrap();
         assert_eq!(PIN.get().unwrap().root, root);
+        let trust = || quick_support_guard::LaunchTrust {
+            issuer: "https://support.example.test".into(),
+            issuer_key: [0; 32],
+            organization_id: "22222222-2222-4222-8222-222222222222".into(),
+            solution_id: "33333333-3333-4333-8333-333333333333".into(),
+        };
+        assert!(load_launch_configuration(trust()).is_err()); // Missing fixed file.
+        let launch_file = root.join("receiver-launch.jwt");
+        std::fs::write(&launch_file, vec![b'x'; 4097]).unwrap();
+        assert!(load_launch_configuration(trust()).is_err());
+        std::fs::write(&launch_file, [0xff]).unwrap();
+        assert!(load_launch_configuration(trust()).is_err());
+        std::fs::remove_file(&launch_file).unwrap();
         assert!(PIN
             .get()
             .unwrap()
