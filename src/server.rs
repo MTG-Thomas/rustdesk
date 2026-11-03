@@ -1024,3 +1024,49 @@ fn quick_support_clock() -> Result<(u64, std::time::Instant), quick_support_guar
         .as_secs();
     Ok((wall, std::time::Instant::now()))
 }
+
+/// Windows source entry for the authenticated child host; not a startup route.
+/// Verification must independently establish parent origin, signed launch/profile
+/// configuration and a fresh challenge. Bounds come from that trusted launch.
+#[cfg(all(windows, feature = "quick-support-child"))]
+pub async fn run_quick_support_inherited(
+    server: ServerPtr,
+    paths: (&str, &str),
+    bounds: (std::time::Instant, Arc<std::sync::atomic::AtomicBool>),
+    verification: (
+        impl FnMut(std::os::windows::io::BorrowedHandle<'_>) -> Result<(), quick_support_guard::Denied>,
+        impl FnMut() -> Result<quick_support_guard::ControlIdentity, quick_support_guard::Denied>,
+    ),
+) -> ResultType<()> {
+    use crate::quick_support_child::windows_parent::{bounded_pipe::CancellablePipe, ParentLaunch};
+    if paths.0 == paths.1 {
+        bail!("private pipes must be distinct");
+    }
+    let (authenticate, mut configuration) = verification;
+    let mut launch = ParentLaunch::from_environment(authenticate, || {
+        Ok((
+            configuration()?,
+            crate::quick_support_receiver::fresh_challenge()?,
+        ))
+    })?;
+    let control = CancellablePipe::connect(paths.0, bounds.0, bounds.1.clone())?;
+    let native = CancellablePipe::connect(paths.1, bounds.0, bounds.1.clone())?;
+    create_quick_support_connection(
+        server,
+        control,
+        native,
+        &mut launch,
+        |native| {
+            let file = native.into_file()?;
+            // The verified CancellablePipe owns an overlapped handle and joins I/O
+            // before transfer. Adopt that exact handle; do not reopen the namespace.
+            let pipe = unsafe { crate::quick_support_async_pipe::attach(file) }?;
+            Ok(Stream::Tcp(tcp::FramedStream::from(
+                pipe,
+                "127.0.0.1:0".parse()?,
+            )))
+        },
+        bounds.1,
+    )
+    .await
+}

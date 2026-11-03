@@ -160,10 +160,8 @@ Local proof: two synthetic workstation tests; the existing verifier/control/
 profile/startup suite; and the native adapter test compiled against newly
 generated message types. Existing desktop CI additionally runs the adapter test
 with the opt-in feature. Full application build results and Windows runtime
-results must be recorded separately. The next integration is the concrete Windows
-overlapped native-pipe conversion,
-independently authenticated signed startup/profile configuration, fresh receiver
-challenge production, and an always-visible receiver-local Stop surface. The
+results must be recorded separately. The next integration is
+independently authenticated signed startup/profile configuration and an always-visible receiver-local Stop surface. The
 native host API must consume exactly the verified pipe handles, use the same
 monotonic cancellation flag and bounded parent reader, and run only after private
 profile installation. No default trust, credentials or production keys are added.
@@ -208,3 +206,30 @@ The desktop's declared Rust 1.75 floor is already inconsistent with its lock:
 existing `openssl-sys` 0.9.117 requires Rust 1.80, while desktop CI uses `stable`.
 Qualify and pin the actual release compiler before production. The standalone
 verifier's successful Rust 1.75 tests do not qualify the entire desktop graph.
+
+## Retained Windows native pipe consumer (source only)
+
+The Windows source host now opens bounded control/native pipes, authenticates the
+retained parent and independent configuration, and hands the verified native
+handle into Tokio and RustDesk's framed stream. This entry generates a fresh
+32-byte OS-random receiver challenge after configuration verification; a parent
+or peer cannot choose its challenge. The conversion consumes the same
+overlapped handle; it never reopens the pipe path. Cancelled, expired or previously
+failed synchronous readers cannot transfer. Tokio owns the transferred handle on
+both successful registration and error. No default startup route is enabled.
+
+The existing Windows receiver test binary includes a foreign-process pipe fixture:
+verify both pipe servers against the owned child process, transfer the handle,
+assert handle continuity, exchange native-framed messages in both directions,
+observe EOF, and deny cancellation before handoff. The fixture owns and cleans up
+its own process and ephemeral local pipes, with bounded waits. Its Tokio API is
+pinned to the desktop's tested 1.51.6 version in Windows-only dev dependencies;
+all 67 existing locked packages are preserved, with six test dependencies added.
+
+Local Windows MSVC cross-check/Clippy with denied warnings passes, and the Linux
+verifier tests pass on 1.75/1.90. The complete 73-package primitive graph has no
+findings in the cached audit; CI still performs its normal fresh audit. These
+facts are not Windows execution or whole-desktop acceptance. The existing Windows
+CI job must execute the new native pipe fixture. Production still requires signed
+startup/private-profile configuration, persistent customer Stop UI, signed release qualification and internal device
+acceptance. Synthetic fixture trust is not a production issuer or consent.

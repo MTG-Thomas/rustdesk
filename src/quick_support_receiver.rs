@@ -16,6 +16,15 @@ use std::{
 // Deny every slot (including future ones), then allow only keyboard/input.
 pub(crate) const DESKTOP_PERMISSIONS: u64 = 0x5555_5555_5555_5556;
 
+/// Fresh receiver challenge, independent of parent or peer-provided strings.
+#[cfg(any(windows, test))]
+pub(crate) fn fresh_challenge() -> Result<String, Denied> {
+    let mut bytes = [0; 32];
+    hbb_common::rand::RngCore::try_fill_bytes(&mut hbb_common::rand::rngs::OsRng, &mut bytes)
+        .map_err(|_| Denied)?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
 pub(crate) struct Receiver {
     child: Mutex<ChildConnection>,
     receiver_id: String,
@@ -398,6 +407,10 @@ mod tests {
 
     #[test]
     fn native_login_requires_consent_and_limits_desktop_packets_until_terminal_revoke() {
+        let first = fresh_challenge().unwrap();
+        assert_eq!(first.len(), 64);
+        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_ne!(first, fresh_challenge().unwrap());
         let now = Instant::now();
         let receiver = Arc::new(prepared(now));
         let registration = Registration::new(482, receiver.clone()).unwrap();
