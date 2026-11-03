@@ -178,7 +178,7 @@ exit 0"#;
     }
 }
 
-fn drive_root(path: &Path) -> Result<[u16; 4], Denied> {
+pub(super) fn drive_root(path: &Path) -> Result<[u16; 4], Denied> {
     if !path.is_absolute() {
         return Err(Denied);
     }
