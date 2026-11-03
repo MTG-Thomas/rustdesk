@@ -295,3 +295,37 @@ The handle-list API is implemented in a parallel feature function to preserve
 the established launch path under the repository's regression-surface rules.
 Cross-compilation and vet are source evidence; actual Windows execution in the
 existing helper CI job is required before claiming the fixture behavior passed.
+
+## Source-only receiver control delivery
+
+`lifecycle.RunWithReceiverControl` composes the existing verified download,
+private session directory, retained-parent contained launch and both transport
+routes with a third private pipe dedicated to receiver issuer envelopes. The
+existing `Run` path is unchanged. Its child arguments identify the two existing
+native pipes and the separate `--quick-support-control-pipe`; these arguments
+are names, not authority, and default RustDesk startup remains disabled.
+
+`receivercontrol.Forward` consumes opaque source envelopes, writes one four-byte
+big-endian length plus UTF-8 payload per control (1..16 KiB), and closes on source
+EOF, invalid framing, write failure, cancellation or bounded deadline. It has no
+issuer key, signature bypass or consent flag. The receiver must independently
+verify issuer, scope, sequence, expiry and terminal revocation, with an actual
+local consent event before dispatch. The caller's source must come from its
+existing authorized issuer/session path; this component does not mint controls.
+
+Control pipe acceptance pins the created child exactly as both native routes do.
+A control failure cancels the shared lifecycle, closes both transport routes,
+terminates the Job Object and joins the control worker boundedly. The synthetic
+Windows fixture reads an opaque control before connecting both native routes,
+then proves source EOF triggers contained-process/directory teardown. It is
+framing/lifecycle evidence, not receiver authorization or consent acceptance.
+The independent receiver tests supply that component's cryptographic coverage;
+combined real-client, UI, expiry and device acceptance remain unfinished.
+
+Linux in-memory fixtures exercise the maximum frame size, malformed input,
+source closure, missing deadline and cancellation after a partial header write.
+No live Worker, device, production artifact or new credential is used by these
+fixtures. Actual Windows execution is required in normal CI; cross-compilation
+alone does not establish the lifecycle result. A cancellable receiver scheduler,
+real signed configuration/origin verification and UI/capability wiring are still
+required before connecting an application startup hook or enabling control.
