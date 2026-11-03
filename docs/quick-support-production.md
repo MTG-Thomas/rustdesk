@@ -135,3 +135,22 @@ available. Existing signing workflow approvals, human-only identity verification
 and actual customer consent cannot be synthesized. Prepare source, tests and
 release evidence while those steps are unavailable; do not replace them with
 synthetic acceptance or bypass normal approval/security controls.
+
+## Dependency patch batch
+
+The first compatible patch batch reduces the same cached RustSec baseline from
+29 to 19 vulnerability entries, and from 46 to 31 warning entries (23
+unmaintained, 6 unsound, 2 yanked). It updates channels, Rustls/WebPKI and roots,
+compression, RNG, mmap, async runtime and error handling within existing version
+requirements. Remaining findings are open; no advisory or warning is waived.
+
+Rust 1.90 local validation passes the existing 19 key-exchange/wire, framing,
+compression-limit, stream and TLS tests, plus actual profile Config integration.
+The linked local Zstd reports 1.5.7. These are package/runtime regression results,
+not a signed Windows release or device acceptance receipt. Existing full desktop
+CI remains required; the protocol checks are additional checks in its current job.
+
+The desktop's declared Rust 1.75 floor is already inconsistent with its lock:
+existing `openssl-sys` 0.9.117 requires Rust 1.80, while desktop CI uses `stable`.
+Qualify and pin the actual release compiler before production. The standalone
+verifier's successful Rust 1.75 tests do not qualify the entire desktop graph.
