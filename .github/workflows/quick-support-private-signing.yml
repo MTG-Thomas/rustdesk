@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   sign:
-    if: github.repository == 'MTG-Thomas/rustdesk' && github.ref == 'refs/heads/master'
+    if: github.repository == 'MTG-Thomas/rustdesk' && github.ref == 'refs/heads/main'
     runs-on: windows-2022
     environment: private-artifact-signing
     timeout-minutes: 20
@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Require exact master deployment policy and signing configuration
+      - name: Require exact main deployment policy and signing configuration
         env:
           GH_TOKEN: ${{ github.token }}
           SIGNING_CLIENT_ID: ${{ vars.AZURE_SIGNING_CLIENT_ID }}
@@ -37,9 +37,9 @@ jobs:
           $base = 'https://api.github.com/repos/MTG-Thomas/rustdesk/environments/private-artifact-signing'
           $environment = Invoke-RestMethod $base -Headers $headers
           $policy = $environment.deployment_branch_policy
-          if (-not $policy.custom_branch_policies -or $policy.protected_branches) { throw 'Exact master deployment policy required.' }
+          if (-not $policy.custom_branch_policies -or $policy.protected_branches) { throw 'Exact main deployment policy required.' }
           $rules = Invoke-RestMethod "$base/deployment-branch-policies" -Headers $headers
-          if ($rules.total_count -ne 1 -or $rules.branch_policies[0].name -cne 'master' -or $rules.branch_policies[0].type -ne 'branch') { throw 'Only the master branch may sign.' }
+          if ($rules.total_count -ne 1 -or $rules.branch_policies[0].name -cne 'main' -or $rules.branch_policies[0].type -ne 'branch') { throw 'Only the main branch may sign.' }
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.26.10'
