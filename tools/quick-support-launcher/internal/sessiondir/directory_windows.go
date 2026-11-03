@@ -155,6 +155,23 @@ func (d *Directory) Path() (string, error) {
 	return d.path, nil
 }
 
+// ProfileHandle returns an owned, non-inheritable duplicate of the pinned object.
+// The caller must close it before Cleanup. Duplicating avoids reopening a path
+// whose no-delete sharing conflicts with the creator's DELETE access.
+func (d *Directory) ProfileHandle() (windows.Handle, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closing || d.done || d.handle == 0 {
+		return 0, ErrRejected
+	}
+	var handle windows.Handle
+	if windows.DuplicateHandle(windows.CurrentProcess(), d.handle, windows.CurrentProcess(), &handle,
+		windows.GENERIC_READ|windows.SYNCHRONIZE, false, 0) != nil {
+		return 0, ErrRejected
+	}
+	return handle, nil
+}
+
 func (d *Directory) FilePath(name string) (string, error) {
 	if !filepath.IsLocal(name) || filepath.Base(name) != name || name == "." || strings.ContainsAny(name, `\/:`) || strings.ContainsRune(name, 0) {
 		return "", ErrRejected

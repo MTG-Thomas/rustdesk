@@ -124,3 +124,29 @@ func TestCleanupKeepsOutsideJunctionTargetAndRetriesOwnedBusyFile(t *testing.T) 
 		t.Fatal("owned root was not removed")
 	}
 }
+
+func TestProfileDuplicatePreservesIdentityAndClosedDirectoryIsDenied(t *testing.T) {
+	d, err := newAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Cleanup()
+	handle, err := d.ProfileHandle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var original, duplicate windows.ByHandleFileInformation
+	if windows.GetFileInformationByHandle(d.handle, &original) != nil || windows.GetFileInformationByHandle(handle, &duplicate) != nil ||
+		original.VolumeSerialNumber != duplicate.VolumeSerialNumber || original.FileIndexHigh != duplicate.FileIndexHigh || original.FileIndexLow != duplicate.FileIndexLow {
+		t.Fatal("duplicate changed directory identity")
+	}
+	if windows.CloseHandle(handle) != nil {
+		t.Fatal("cannot release duplicate")
+	}
+	if d.Cleanup() != nil {
+		t.Fatal("cleanup failed")
+	}
+	if h, err := d.ProfileHandle(); h != 0 || err != ErrRejected {
+		t.Fatal("closed directory produced a handle")
+	}
+}

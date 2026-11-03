@@ -86,8 +86,17 @@ func RunWithReceiverControl(parent context.Context, release string, trust artifa
 			return ErrStopped
 		}
 	}
-	child, err := contained.StartSuspendedWithParent(ctx, executable, []string{"--quick-support-private-pipes", pipes[0].Path(), pipes[1].Path(), "--quick-support-control-pipe", control.Path()}, path)
+	profile, err := directory.ProfileHandle()
 	if err != nil {
+		return ErrStopped
+	}
+	child, err := contained.StartSuspendedWithProfile(ctx, executable, []string{"--quick-support-private-pipes", pipes[0].Path(), pipes[1].Path(), "--quick-support-control-pipe", control.Path()}, path, profile)
+	profileErr := windows.CloseHandle(profile)
+	if profileErr != nil && child != nil {
+		child.Close()
+		return ErrStopped
+	}
+	if err != nil || profileErr != nil {
 		return ErrStopped
 	}
 	defer func() {
