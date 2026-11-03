@@ -459,3 +459,6 @@ pub use child::ChildConnection;
 
 mod pipe;
 pub use pipe::{LocalConsent, PipeAdapter, VerifiedLaunch};
+
+mod workstation;
+pub use workstation::WorkstationLogin;

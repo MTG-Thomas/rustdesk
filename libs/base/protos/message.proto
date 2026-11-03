@@ -84,6 +84,12 @@ message LoginRequest {
   string my_platform = 13;
   bytes hwid = 14;
   string avatar = 17;
+  QuickSupportAuthentication quick_support_auth = 18;
+}
+
+message QuickSupportAuthentication {
+  string grant = 1;
+  bytes workstation_proof = 2;
 }
 
 message Terminal {
