@@ -284,6 +284,15 @@ jobs:
         shell: bash
         run: echo "SODIUM_LIB_DIR=$VCPKG_ROOT/installed/${{ matrix.job.vcpkg-triplet }}/lib" >> "$GITHUB_ENV"
 
+      - name: Build authenticated Quick Support desktop integration
+        if: ${{ matrix.job.arch == 'x86_64' }}
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal
+          if ($LASTEXITCODE -ne 0) { throw 'Quick Support Rust toolchain installation failed.' }
+          cargo +1.90.0 build --release --locked --features flutter,hwcodec,vram,quick-support-child --lib --bins
+          if ($LASTEXITCODE -ne 0) { throw 'Quick Support Windows desktop integration failed.' }
+
       - name: Build rustdesk
         run: |
           # Windows: build RustDesk
