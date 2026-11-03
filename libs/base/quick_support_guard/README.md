@@ -307,3 +307,24 @@ prove actual launcher ancestry. The actual default startup hook remains disabled
 Trusted origin/configuration implementations, dedicated control production,
 cancellable reads, real UI/capability wiring and composed Windows/device
 acceptance remain required. No issuer keys or production authority are created.
+
+## Cancellable private reads
+
+`windows_parent::bounded_pipe::run_inherited` is a parallel entry using dedicated
+overlapped pipe handles. The host supplies a monotonic hard deadline from its
+authoritative lease and a shared cancellation signal. Every read checks both
+bounds, waits at most 10 ms between checks, and rejects bytes completed after a
+bound. Errors, EOF, cancellation and expiry permanently stop that reader;
+resetting the signal cannot resume it. The original synchronous entry is unchanged.
+
+Pending operations are cancelled and joined before their buffer, event or
+`OVERLAPPED` storage is released. Kernel cancellation itself is not a hard
+real-time guarantee; the launcher's Job Object/process termination remains the
+final containment bound. See Microsoft's [CancelIoEx contract](https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/nf-ioapiset-cancelioex).
+
+The existing Windows suite checks stalled partial input, deadline expiry and
+cancellation without allowing a subsequent read to resume. The synthetic Go/Rust
+fixture also uses this entry for authenticated framed control and native input.
+Actual Windows CI execution must qualify these tests. Trusted origin/configuration,
+real local consent, control-priority scheduling and production startup remain
+separate prerequisites; this entry does not activate them or remote control.
