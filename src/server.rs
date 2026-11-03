@@ -1011,8 +1011,16 @@ where
     }
     .await;
     receiver.stop();
-    // The authenticated host's cancellable pipe must complete before teardown.
-    reader.await?;
+    #[cfg(windows)]
+    let ui_result = {
+        let receiver = receiver.clone();
+        tokio::task::spawn_blocking(move || receiver.finish_ui()).await
+    };
+    // Join both resources even if one reports failure; no UI join blocks Tokio.
+    let reader_result = reader.await;
+    #[cfg(windows)]
+    ui_result??;
+    reader_result?;
     result
 }
 
