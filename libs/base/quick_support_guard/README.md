@@ -357,3 +357,20 @@ details; friendly technician labels still require authenticated directory data.
 This adds the consent implementation, not a production startup registration.
 The actual native login/capability path, active-session indicator/Stop action,
 independent control host and real device/UI acceptance remain release gates.
+
+## Controller workstation key storage
+
+`WorkstationKey` is the key primitive behind the existing `WorkstationLogin`
+signer callback. `generate` seeds Ed25519 from the OS CSPRNG, `public_key`
+returns the 43-character base64url key a receiver bootstrap already expects, and
+`signer` yields the owned callback `WorkstationLogin::new` takes, so neither that
+API nor the proof wire format changes. The seed lives in memory only as a
+zeroizing `SigningKey`; `save` writes it as 32 raw bytes, refuses to replace an
+existing file and creates it 0600 on unix. `load` rejects a missing, unreadable,
+truncated or oversized file.
+
+On Windows this module sets no ACL. The caller must place the file in an already
+protected directory and verify that protection before the first write. Key
+provisioning/rotation, configuration paths, network calls and application wiring
+are still absent; no production workstation key exists.
+
