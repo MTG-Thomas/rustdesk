@@ -238,3 +238,35 @@ returns after dropping authorization and both streams, but its owner must close
 the process/job and lease. No production host, issuer key or fabricated consent
 is supplied. These remain source integration tasks before separately authorized
 signed-release/device acceptance. No activation is enabled by the build feature.
+
+## Windows retained-parent pipe binding
+
+The opt-in desktop driver now exports `windows_parent::LocalPipe` and
+`ParentLaunch`. `LocalPipe::connect` only opens the existing launcher's exact
+local namespace plus a 64-character lowercase hexadecimal nonce. It sets
+anonymous security QoS before opening, so an unauthenticated pipe server is not
+allowed to impersonate the client. No command-line PID is opened or trusted.
+
+`ParentLaunch` owns an already retained process handle from trusted launch or
+handoff. Before any adapter payload read, it checks that the process is live,
+that both pipe handles are client endpoints, and that both servers match that
+process. It then invokes the independent authenticated configuration/challenge
+verifier and repeats the peer/liveness checks before returning authority. A
+failed API call, inadequate process rights, wrong peer, server endpoint or dead
+parent denies initialization. Pipe names and peer ownership never grant consent
+or replace signed configuration.
+
+The process handle must remain retained for the session; the future OS scheduler
+must monitor parent/child exit and cancel both streams and the lease. These are
+synchronous handles: cancellable/deadline-bound reads and the separate control
+producer are still required. No startup hook invokes this component yet. The
+existing default startup refusal and disabled activation remain in force.
+
+The Windows fixture suite creates only local synthetic pipe pairs and a test
+process. It checks current-parent matching, independent configuration denial,
+wrong/live and terminated parents, insufficient rights, server/non-pipe handles
+and malformed/nonlocal names. Windows execution runs in the existing helper CI
+job, alongside all receiver tests. Linux tests and Windows-target compilation
+are separate evidence, neither establishing device or end-to-end acceptance.
+No product dependency or desktop lockfile changes: the fixture's Windows crate
+is a target-specific dev dependency matching the desktop's existing version.

@@ -73,6 +73,12 @@ jobs:
         run: go test -race ./...
       - name: Check Go diagnostics
         run: go vet ./...
+      - name: Run Windows receiver and retained-parent pipe fixtures
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal
+          cargo +1.90.0 test --locked --manifest-path ../../libs/base/quick_support_guard/Cargo.toml
       - name: Parse private signing verifier without signing credentials
         if: runner.os == 'Windows'
         shell: pwsh
