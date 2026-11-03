@@ -188,6 +188,13 @@ jobs:
         command: check
         args: --locked --features quick-support-child --target=${{ matrix.job.target }}
 
+    - name: Test actual Quick Support profile Config hooks
+      uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1
+      with:
+        use-cross: ${{ matrix.job.use-cross }}
+        command: test
+        args: --locked -p hbb_common --features hbb_common/quick-support-profile --test quick_support_profile --target=${{ matrix.job.target }}
+
     - name: clean
       shell: bash
       run: |
