@@ -160,7 +160,8 @@ Local proof: two synthetic workstation tests; the existing verifier/control/
 profile/startup suite; and the native adapter test compiled against newly
 generated message types. Existing desktop CI additionally runs the adapter test
 with the opt-in feature. Full application build results and Windows runtime
-results must be recorded separately. The next integration is the concrete Windows overlapped native-pipe conversion,
+results must be recorded separately. The next integration is the concrete Windows
+overlapped native-pipe conversion,
 independently authenticated signed startup/profile configuration, fresh receiver
 challenge production, and an always-visible receiver-local Stop surface. The
 native host API must consume exactly the verified pipe handles, use the same
@@ -189,3 +190,21 @@ protocol and pass. This isolated source test does not execute the whole desktop,
 real OS input, Windows visual consent or real device sessions. Full desktop
 build/runtime CI remains required. A heavy local desktop build was deferred
 because other owners' Docker test stacks were active on the shared host.
+## Dependency patch batch
+
+The first compatible patch batch reduces the same cached RustSec baseline from
+29 to 19 vulnerability entries, and from 46 to 31 warning entries (23
+unmaintained, 6 unsound, 2 yanked). It updates channels, Rustls/WebPKI and roots,
+compression, RNG, mmap, async runtime and error handling within existing version
+requirements. Remaining findings are open; no advisory or warning is waived.
+
+Rust 1.90 local validation passes the existing 19 key-exchange/wire, framing,
+compression-limit, stream and TLS tests, plus actual profile Config integration.
+The linked local Zstd reports 1.5.7. These are package/runtime regression results,
+not a signed Windows release or device acceptance receipt. Existing full desktop
+CI remains required; the protocol checks are additional checks in its current job.
+
+The desktop's declared Rust 1.75 floor is already inconsistent with its lock:
+existing `openssl-sys` 0.9.117 requires Rust 1.80, while desktop CI uses `stable`.
+Qualify and pin the actual release compiler before production. The standalone
+verifier's successful Rust 1.75 tests do not qualify the entire desktop graph.
