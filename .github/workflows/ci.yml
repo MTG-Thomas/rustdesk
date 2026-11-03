@@ -188,12 +188,27 @@ jobs:
         command: check
         args: --locked --features quick-support-child --target=${{ matrix.job.target }}
 
+    - name: Test native Quick Support login and receiver integration
+      uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1
+      with:
+        use-cross: ${{ matrix.job.use-cross }}
+        command: test
+        args: --locked --lib --features quick-support-child --target=${{ matrix.job.target }} quick_support_
+
     - name: Test actual Quick Support profile Config hooks
       uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1
       with:
         use-cross: ${{ matrix.job.use-cross }}
         command: test
         args: --locked -p hbb_common --features hbb_common/quick-support-profile --test quick_support_profile --target=${{ matrix.job.target }}
+
+    - name: Test shared transport and compression security contracts
+      shell: bash
+      run: |
+        set -euo pipefail
+        for surface in tcp::tests compress::tests bytes_codec::tests stream::tests tls::tests; do
+          cargo test --locked -p hbb_common --features hbb_common/quick-support-profile,hbb_common/webrtc --lib --target=${{ matrix.job.target }} "$surface" -- --test-threads=1
+        done
 
     - name: clean
       shell: bash

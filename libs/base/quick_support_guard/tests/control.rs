@@ -1,3 +1,11 @@
+#[cfg(windows)]
+extern crate self as hbb_common;
+#[cfg(windows)]
+pub use tokio;
+#[cfg(windows)]
+#[path = "windows/native_pipe.rs"]
+mod native_pipe;
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{Signer, SigningKey};
 use quick_support_guard::{

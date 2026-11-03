@@ -254,6 +254,8 @@ struct InputMouse {
 }
 
 enum MessageInput {
+    #[cfg(feature = "quick-support-child")]
+    QuickSupport(Box<MessageInput>, Arc<crate::quick_support_receiver::Receiver>),
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     Mouse(InputMouse),
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -354,6 +356,8 @@ impl TerminalUserToken {
     }
 }
 pub struct Connection {
+    #[cfg(feature = "quick-support-child")]
+    quick_support: Option<Arc<crate::quick_support_receiver::Receiver>>,
     inner: ConnInner,
     display_idx: usize,
     stream: super::Stream,
@@ -545,6 +549,12 @@ impl Connection {
             challenge: Config::get_auto_password(6),
             ..Default::default()
         };
+        #[cfg(feature = "quick-support-child")]
+        let Ok(quick_support) = crate::quick_support_receiver::take(id) else { return; };
+        #[cfg(feature = "quick-support-child")]
+        let hash = if let Some(receiver) = &quick_support {
+            Hash { challenge: receiver.challenge().into(), ..hash }
+        } else { hash };
         let (tx_from_cm_holder, mut rx_from_cm) = mpsc::unbounded_channel::<ipc::Data>();
         // holding tx_from_cm_holder to avoid cpu burning of rx_from_cm.recv when all sender closed
         let tx_from_cm = tx_from_cm_holder.clone();
@@ -562,6 +572,8 @@ impl Connection {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let tx_cloned = tx.clone();
         let mut conn = Self {
+            #[cfg(feature = "quick-support-child")]
+            quick_support,
             inner: ConnInner {
                 id,
                 tx: Some(tx),
@@ -731,8 +743,23 @@ impl Connection {
             (_tx_clip, rx_clip) = mpsc::unbounded_channel::<i32>();
         }
 
+        #[cfg(feature = "quick-support-child")]
+        let mut quick_support_timer = time::interval(Duration::from_millis(50));
+        #[cfg(feature = "quick-support-child")]
+        let is_quick_support = conn.quick_support.is_some();
         loop {
             tokio::select! {
+                _ = async {
+                    #[cfg(feature = "quick-support-child")]
+                    if is_quick_support { quick_support_timer.tick().await; return; }
+                    std::future::pending::<()>().await;
+                } => {
+                    #[cfg(feature = "quick-support-child")]
+                    if !conn.quick_support.as_ref().map(|receiver| receiver.active(std::time::Instant::now())).unwrap_or(false) {
+                        conn.on_close("Quick Support control ended", false).await;
+                        break;
+                    }
+                },
                 // biased; // video has higher priority // causing test_delay_timer failed while transferring big file
 
                 // Both end an unauthorized connection at once, not on the next timer tick:
@@ -1025,6 +1052,11 @@ impl Connection {
                                 break;
                             },
                             Ok(bytes) => {
+                                #[cfg(feature = "quick-support-child")]
+                                if conn.quick_support.is_some() && Message::parse_from_bytes(&bytes).is_err() {
+                                    conn.on_close("Quick Support malformed message", false).await;
+                                    break;
+                                }
                                 last_recv_time = Instant::now();
                                 conn.session_last_recv_time.as_mut().map(|t| *t.lock().unwrap() = Instant::now());
                                 if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
@@ -1072,6 +1104,13 @@ impl Connection {
                     }
                 }
                 Some((instant, value)) = rx_video.recv() => {
+                    #[cfg(feature = "quick-support-child")]
+                    if let Some(receiver) = &conn.quick_support {
+                        if !receiver.outbound(&value, std::time::Instant::now()) {
+                            conn.on_close("Quick Support output denied", false).await;
+                            break;
+                        }
+                    }
                     if !conn.video_ack_required {
                         if let Some(message::Union::VideoFrame(vf)) = &value.union {
                             video_service::notify_video_frame_fetched(vf.display as usize, id, Some(instant.into()));
@@ -1083,6 +1122,13 @@ impl Connection {
                     }
                 },
                 Some((instant, value)) = rx.recv() => {
+                    #[cfg(feature = "quick-support-child")]
+                    if let Some(receiver) = &conn.quick_support {
+                        if !receiver.outbound(&value, std::time::Instant::now()) {
+                            conn.on_close("Quick Support output denied", false).await;
+                            break;
+                        }
+                    }
                     let latency = instant.elapsed().as_millis() as i64;
                     #[allow(unused_mut)]
                     let mut msg = value;
@@ -1250,6 +1296,8 @@ impl Connection {
         loop {
             match receiver.recv_timeout(std::time::Duration::from_millis(500)) {
                 Ok(v) => match v {
+                    #[cfg(feature = "quick-support-child")]
+                    MessageInput::QuickSupport(input, receiver) => Self::handle_private_input(*input, receiver),
                     MessageInput::Mouse(mouse_input) => {
                         handle_mouse(
                             &mouse_input.msg,
@@ -1313,6 +1361,25 @@ impl Connection {
         #[cfg(target_os = "linux")]
         clear_remapped_keycode();
         log::debug!("Input thread exited");
+    }
+
+    #[cfg(all(feature = "quick-support-child", not(any(target_os = "android", target_os = "ios"))))]
+    fn handle_private_input(input: MessageInput, receiver: Arc<crate::quick_support_receiver::Receiver>) {
+        let result = receiver.dispatch(std::time::Instant::now(), || {
+            match input {
+                MessageInput::Mouse(input) => handle_mouse(&input.msg, input.conn_id, input.username, input.argb, input.simulate, input.show_cursor),
+                MessageInput::Pointer((msg, id)) => handle_pointer(&msg, id),
+                MessageInput::Key((mut msg, press)) => {
+                    msg.press = false;
+                    if press { msg.down = true; }
+                    handle_key(&msg);
+                    if press { msg.down = false; handle_key(&msg); }
+                }
+                _ => return Err(quick_support_guard::Denied),
+            }
+            Ok(())
+        });
+        if result.is_err() { receiver.stop(); }
     }
 
     async fn post_seq_loop(mut rx: mpsc::UnboundedReceiver<(String, Value)>) {
@@ -1841,6 +1908,13 @@ impl Connection {
     // Returns whether this connection should be kept alive.
     // `true` does not necessarily mean authorization succeeded (e.g. REQUIRE_2FA case).
     async fn send_logon_response_and_keep_alive(&mut self) -> bool {
+        #[cfg(feature = "quick-support-child")]
+        if let Some(receiver) = &self.quick_support {
+            if !receiver.authorized(std::time::Instant::now()) {
+                self.on_close("Quick Support consent required", false).await;
+                return false;
+            }
+        }
         if self.authorized {
             return true;
         }
@@ -1889,6 +1963,8 @@ impl Connection {
             return false;
         }
         self.authorized = true;
+        #[cfg(feature = "quick-support-child")]
+        if self.quick_support.is_some() { self.stream.set_max_packet_length(4 * 1024 * 1024); }
         self.unauthorized_id = None;
         // One-time means gone once it has let a peer in, not once that peer
         // leaves. This session's later logins come in on the password the
@@ -2344,6 +2420,8 @@ impl Connection {
     }
 
     fn try_start_cm(&mut self, peer_id: String, name: String, authorized: bool) {
+        #[cfg(feature = "quick-support-child")]
+        if self.quick_support.is_some() { return; }
         self.send_to_cm(ipc::Data::Login {
             id: self.inner.id(),
             is_file_transfer: self.file_transfer.is_some(),
@@ -2427,6 +2505,13 @@ impl Connection {
         simulate: bool,
         show_cursor: bool,
     ) {
+        #[cfg(feature = "quick-support-child")]
+        if let Some(receiver) = &self.quick_support {
+            if self.tx_input.send(MessageInput::QuickSupport(Box::new(MessageInput::Mouse(InputMouse {
+                msg, conn_id, username, argb, simulate, show_cursor,
+            })), receiver.clone())).is_err() { receiver.stop(); }
+            return;
+        }
         self.tx_input
             .send(MessageInput::Mouse(InputMouse {
                 msg,
@@ -2442,6 +2527,11 @@ impl Connection {
     #[inline]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     fn input_pointer(&self, msg: PointerDeviceEvent, conn_id: i32) {
+        #[cfg(feature = "quick-support-child")]
+        if let Some(receiver) = &self.quick_support {
+            if self.tx_input.send(MessageInput::QuickSupport(Box::new(MessageInput::Pointer((msg, conn_id))), receiver.clone())).is_err() { receiver.stop(); }
+            return;
+        }
         self.tx_input
             .send(MessageInput::Pointer((msg, conn_id)))
             .ok();
@@ -2450,6 +2540,11 @@ impl Connection {
     #[inline]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     fn input_key(&self, msg: KeyEvent, press: bool) {
+        #[cfg(feature = "quick-support-child")]
+        if let Some(receiver) = &self.quick_support {
+            if self.tx_input.send(MessageInput::QuickSupport(Box::new(MessageInput::Key((msg, press))), receiver.clone())).is_err() { receiver.stop(); }
+            return;
+        }
         // to-do: if is the legacy mode, and the key is function key "LockScreen".
         // Switch to the primary display.
         self.tx_input.send(MessageInput::Key((msg, press))).ok();
@@ -2819,6 +2914,8 @@ impl Connection {
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     fn try_start_cm_ipc(&mut self) {
+        #[cfg(feature = "quick-support-child")]
+        if self.quick_support.is_some() { return; }
         if let Some(p) = self.start_cm_ipc_para.take() {
             tokio::spawn(async move {
                 #[cfg(windows)]
@@ -2845,6 +2942,38 @@ impl Connection {
     }
 
     async fn on_message(&mut self, msg: Message) -> bool {
+        #[cfg(feature = "quick-support-child")]
+        if let Some(receiver) = self.quick_support.clone() {
+            if let Some(message::Union::LoginRequest(mut request)) = msg.union.clone() {
+                let approved = async {
+                    let (wall, now) = super::quick_support_clock()?;
+                    receiver.request(&mut request, wall, now)?;
+                    let prompt = receiver.clone();
+                    tokio::task::spawn_blocking(move || prompt.prompt()).await.map_err(|_| quick_support_guard::Denied)??;
+                    Ok::<_, quick_support_guard::Denied>(())
+                }.await;
+                if approved.is_err() {
+                    receiver.stop();
+                    self.send_close_reason_no_retry("Quick Support authorization denied").await;
+                    self.on_close("Quick Support authorization denied", false).await;
+                    return false;
+                }
+                self.lr = request;
+                return self.send_logon_response_and_keep_alive().await;
+            }
+            if !receiver.inbound(&msg, std::time::Instant::now()) {
+                receiver.stop();
+                self.on_close("Quick Support message denied", false).await;
+                return false;
+            }
+        }
+        // Until the authenticated private-child context is installed here, a
+        // Quick Support login must not fall through to ordinary authorization.
+        if matches!(msg.union.as_ref(), Some(message::Union::LoginRequest(lr)) if lr.quick_support_auth.is_some()) {
+            self.send_close_reason_no_retry("Quick Support receiver is not ready").await;
+            self.on_close("Quick Support receiver is not ready", true).await;
+            return false;
+        }
         if let Some(message::Union::Misc(misc)) = &msg.union {
             // Move the CloseReason forward, as this message needs to be received when unauthorized, especially for kcp.
             if let Some(misc::Union::CloseReason(s)) = &misc.union {
@@ -5236,6 +5365,8 @@ impl Connection {
     }
 
     async fn on_close(&mut self, reason: &str, lock: bool) {
+        #[cfg(feature = "quick-support-child")]
+        if let Some(receiver) = &self.quick_support { receiver.stop(); }
         if self.closed {
             return;
         }

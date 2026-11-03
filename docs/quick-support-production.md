@@ -135,3 +135,137 @@ available. Existing signing workflow approvals, human-only identity verification
 and actual customer consent cannot be synthesized. Prepare source, tests and
 release evidence while those steps are unavailable; do not replace them with
 synthetic acceptance or bypass normal approval/security controls.
+
+### Native login protocol plumbing (source only)
+
+The optional desktop client now has in-memory workstation login material and a
+separate `LoginRequest.quick_support_auth` field (18) for the grant and
+challenge-bound workstation signature. The supplied signer creates no keys here.
+The adapter refuses alternate-service requests, wrong receivers, short legacy
+challenges and signer failures; it clears password, device trust, OS login and
+legacy option fields instead of sending two authorization paths.
+
+Ordinary native connections explicitly close any login containing this field
+before password authorization. A separate source-only native host factory now
+verifies retained parent/configuration and the initial signed control envelope,
+binds its receiver to the internally allocated connection ID, and routes native
+login through grant verification and receiver-local consent. It uses a dedicated
+parent control reader, expiry checks, capability-filtered service output and a
+final authorization check at the queued input sink. Consent holds no guard lock,
+so parent revocation can cancel the modal dialog. Teardown cancels and joins the
+parent reader. Private startup remains refused; no route invokes this factory.
+This is not a working production control session or device acceptance.
+
+Local proof: two synthetic workstation tests; the existing verifier/control/
+profile/startup suite; and the native adapter test compiled against newly
+generated message types. Existing desktop CI additionally runs the adapter test
+with the opt-in feature. Full application build results and Windows runtime
+results must be recorded separately. The next integration is
+independently authenticated signed startup/profile configuration and an always-visible receiver-local Stop surface. The
+native host API must consume exactly the verified pipe handles, use the same
+monotonic cancellation flag and bounded parent reader, and run only after private
+profile installation. No default trust, credentials or production keys are added.
+
+Regression surface: the client gains an optional in-memory field and opt-in
+login hook; ordinary clients keep the existing message construction. The
+protobuf adds an unused optional field. The server's only feature-off
+behavior change is refusing that field, preventing unsupported authorization
+fallback. Feature-on hooks attach only a registered private connection: ordinary
+connections retain the old authentication and input paths. The private factory
+uses explicit two-bit capability denial (all slots except keyboard/input), a
+4 MiB authorized frame bound and no installed Connection Manager IPC. Safe video
+decoder/quality/cursor options remain available; privacy, input blocking, file,
+clipboard, audio and terminal capabilities are refused. No shared function
+signatures, infrastructure permissions, signing material or startup policy change.
+
+Additional local receiver proof uses the existing signed synthetic issuer fixture
+and a deterministic workstation proof from its existing test identity. It covers
+exact connection-ID binding, proof removal before native retention, required
+consent, revocation during the prompt, replay, expiry, malformed/oversized/truncated
+control, EOF, queued-input denial after revoke, desktop capability bits and safe
+video options. The four native login/receiver tests compile against the generated
+protocol and pass. This isolated source test does not execute the whole desktop,
+real OS input, Windows visual consent or real device sessions. Full desktop
+build/runtime CI remains required. A heavy local desktop build was deferred
+because other owners' Docker test stacks were active on the shared host.
+## Dependency patch batch
+
+The first compatible patch batch reduces the same cached RustSec baseline from
+29 to 19 vulnerability entries, and from 46 to 31 warning entries (23
+unmaintained, 6 unsound, 2 yanked). It updates channels, Rustls/WebPKI and roots,
+compression, RNG, mmap, async runtime and error handling within existing version
+requirements. Remaining findings are open; no advisory or warning is waived.
+
+Rust 1.90 local validation passes the existing 19 key-exchange/wire, framing,
+compression-limit, stream and TLS tests, plus actual profile Config integration.
+The linked local Zstd reports 1.5.7. These are package/runtime regression results,
+not a signed Windows release or device acceptance receipt. Existing full desktop
+CI remains required; the protocol checks are additional checks in its current job.
+
+The desktop's declared Rust 1.75 floor is already inconsistent with its lock:
+existing `openssl-sys` 0.9.117 requires Rust 1.80, while desktop CI uses `stable`.
+Qualify and pin the actual release compiler before production. The standalone
+verifier's successful Rust 1.75 tests do not qualify the entire desktop graph.
+
+## Retained Windows native pipe consumer (source only)
+
+The Windows source host now opens bounded control/native pipes, authenticates the
+retained parent and independent configuration, and hands the verified native
+handle into Tokio and RustDesk's framed stream. This entry generates a fresh
+32-byte OS-random receiver challenge after configuration verification; a parent
+or peer cannot choose its challenge. The conversion consumes the same
+overlapped handle; it never reopens the pipe path. Cancelled, expired or previously
+failed synchronous readers cannot transfer. Tokio owns the transferred handle on
+both successful registration and error. No default startup route is enabled.
+
+The existing Windows receiver test binary includes a foreign-process pipe fixture:
+verify both pipe servers against the owned child process, transfer the handle,
+assert handle continuity, exchange native-framed messages in both directions,
+observe EOF, and deny cancellation before handoff. The fixture owns and cleans up
+its own process and ephemeral local pipes, with bounded waits. Its Tokio API is
+pinned to the desktop's tested 1.51.6 version in Windows-only dev dependencies;
+all 67 existing locked packages are preserved, with six test dependencies added.
+
+Local Windows MSVC cross-check/Clippy with denied warnings passes, and the Linux
+verifier tests pass on 1.75/1.90. The complete 73-package primitive graph has no
+findings in the cached audit; CI still performs its normal fresh audit. These
+facts are not Windows execution or whole-desktop acceptance. The existing Windows
+CI job must execute the new native pipe fixture. Production still requires signed
+startup/private-profile configuration, persistent customer Stop UI, signed release qualification and internal device
+acceptance. Synthetic fixture trust is not a production issuer or consent.
+
+## Persistent receiver Stop surface (source only)
+
+The private receiver keeps the existing explicit local Allow dialog, then creates
+an owned, topmost Stop window before returning approval to the native guard. The
+guard rechecks the grant/lease after UI readiness. Readiness is bounded by the
+verified request deadline; failure, expiry, cancellation or invisible creation
+denies access. Closing the window, Escape or Stop sets the shared cancellation
+signal before dismissal. Hiding/minimizing the window ends access on its timer;
+parent revocation and lease expiry close it through the same monotonic signal.
+No consent is inferred from a pipe connection or status-window readiness.
+The private protocol also refuses secure-attention, lock-screen and power-key
+commands (including modifier slots); those native helpers can remove the local
+Stop surface. Normal text/keyboard and pointer input remains available.
+
+The connection retains the UI worker until teardown. Shutdown signals first and
+joins UI work on a blocking worker, then joins the control reader even if UI
+cleanup reports an error. Drop only signals cancellation and never blocks Tokio;
+the launcher's existing kill-on-close Job Object remains the final process bound.
+There is no new startup route, service, trust default, key, deployment or activation.
+
+Focused synthetic Windows policy tests cover one-use readiness, actual callback
+cancellation before dismissal, invisible/expired/cancelled/API-failed creation,
+and failed worker joins. They do not show a valid consent dialog or simulate real
+customer acceptance. Native receiver tests additionally prove that local Stop
+denies queued input before the connection loop observes it and cannot resurrect
+admission. MSVC cross-check/Clippy passes with warnings denied; actual Windows
+execution, visual/focus/accessibility behavior, session lock/secure-desktop/outage
+behavior and full internal-device teardown remain mandatory acceptance work.
+
+Regression surface: the existing consent module gains an attended wrapper; only
+the private receiver stores that UI owner and uses it for approval. The private
+host cleanup joins it outside the async loop. Ordinary client authentication,
+installed Connection Manager IPC, public signatures, dependency locks and CI
+permissions/matrices remain unchanged. Signed startup/profile verification and
+release/dependency/security gates are still outstanding before activation.

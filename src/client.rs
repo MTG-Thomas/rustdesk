@@ -2850,6 +2850,8 @@ struct ConnToken {
 /// Login config handler for [`Client`].
 #[derive(Default)]
 pub struct LoginConfigHandler {
+    #[cfg(feature = "quick-support-child")]
+    quick_support_login: Option<quick_support_guard::WorkstationLogin>,
     id: String,
     pub conn_type: ConnType,
     pub is_terminal_admin: bool,
@@ -3788,6 +3790,13 @@ impl LoginConfigHandler {
         serde_json::to_string::<HashMap<String, String>>(&x).unwrap_or_default()
     }
 
+    #[cfg(feature = "quick-support-child")]
+    pub fn configure_quick_support_login(&mut self, login: quick_support_guard::WorkstationLogin) {
+        self.quick_support_login = Some(login);
+        self.remember = false;
+        self.password.clear();
+    }
+
     /// Create a [`Message`] for login.
     fn create_login_msg(
         &self,
@@ -3902,6 +3911,19 @@ impl LoginConfigHandler {
                 lr.set_terminal(terminal);
             }
             _ => {}
+        }
+
+        #[cfg(feature = "quick-support-child")]
+        if let Some(login) = &self.quick_support_login {
+            if self.conn_type != ConnType::DEFAULT_CONN
+                || crate::quick_support_login::attach_login(login, &self.hash.challenge, &mut lr).is_err()
+            {
+                let mut denied = Message::new();
+                let mut misc = Misc::new();
+                misc.set_close_reason("Quick Support authorization denied".into());
+                denied.set_misc(misc);
+                return denied;
+            }
         }
 
         let mut msg_out = Message::new();
