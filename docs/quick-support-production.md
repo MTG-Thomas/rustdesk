@@ -234,6 +234,47 @@ CI job must execute the new native pipe fixture. Production still requires signe
 startup/private-profile configuration, persistent customer Stop UI, signed release qualification and internal device
 acceptance. Synthetic fixture trust is not a production issuer or consent.
 
+## Concrete parent-origin verifier (source only)
+
+The inherited Windows entry now requires an exact launcher image pin: SHA-256,
+byte count and publisher thumbprint supplied by the signed application/release
+configuration. It no longer accepts an arbitrary origin callback. The verifier
+queries the retained foreign process handle, rejects dead/self processes, checks
+an exact local fixed-drive non-reparse file, holds it without write/delete sharing,
+hashes it, and requires Windows Valid Authenticode with the expected publisher
+and timestamp. It rechecks process liveness afterward. No PID lookup, environment
+value, customer link or downloaded payload supplies the trust pin.
+
+The bounded OS verification process uses protected system PowerShell, a constant
+UTF-16 encoded script, cleared environment, fixed system module path and no
+forwarded output. Origin verification and pipe opening run on a blocking worker.
+An origin match does not authorize a session or establish customer consent.
+
+MSVC cross-check/Clippy with warnings denied passes. The Windows tests inspect
+our existing pinned, unmodified signed fixture and reject wrong publishers/hashes;
+they never execute that vendor program. Missing fixture data fails the required
+CI lane. The tests also cover nonlocal-path and dead-parent denial; those Windows
+runtime results are still pending. Actual Windows execution of this new verifier and signed launcher/child acceptance
+still need normal CI/release evidence. The production pins are not provisioned,
+private startup stays refused, and no trust root or credential is created.
+
+The next profile handoff must retain the same private directory object across
+parent failure, before any Config lookup or Server construction. The launcher
+already creates a fresh protected user-owned directory and holds a no-delete-share
+handle with DELETE access. Reopening a child handle that denies delete sharing
+would conflict with that existing access; an explicit inherited duplicate of the
+same directory object is needed instead. Validate owner/protected DACL, directory
+identity/reparse status and the current-directory binding, clear inheritance, and
+hold the pin through process exit. Session/generation/issuer inputs must still
+come from independent authoritative configuration, never the token under check.
+Do not wire the default startup path until these conditions are implemented.
+
+Customer release inventory must also confirm Public Trust signing. The launcher's
+existing signing documentation records a purchased Basic account and an older
+Private Trust rehearsal; that inventory is not current Public Trust evidence.
+Keep private root imports confined to the approved ephemeral rehearsal and never
+install a private root on customer machines to obtain a passing signature check.
+
 ## Persistent receiver Stop surface (source only)
 
 The private receiver keeps the existing explicit local Allow dialog, then creates

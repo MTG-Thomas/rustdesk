@@ -1041,24 +1041,36 @@ pub async fn run_quick_support_inherited(
     server: ServerPtr,
     paths: (&str, &str),
     bounds: (std::time::Instant, Arc<std::sync::atomic::AtomicBool>),
-    verification: (
-        impl FnMut(std::os::windows::io::BorrowedHandle<'_>) -> Result<(), quick_support_guard::Denied>,
-        impl FnMut() -> Result<quick_support_guard::ControlIdentity, quick_support_guard::Denied>,
-    ),
+    origin: crate::quick_support_child::windows_parent::origin::ParentTrust,
+    mut configuration: impl FnMut() -> Result<quick_support_guard::ControlIdentity, quick_support_guard::Denied>
+        + Send
+        + 'static,
 ) -> ResultType<()> {
     use crate::quick_support_child::windows_parent::{bounded_pipe::CancellablePipe, ParentLaunch};
     if paths.0 == paths.1 {
         bail!("private pipes must be distinct");
     }
-    let (authenticate, mut configuration) = verification;
-    let mut launch = ParentLaunch::from_environment(authenticate, || {
-        Ok((
-            configuration()?,
-            crate::quick_support_receiver::fresh_challenge()?,
-        ))
-    })?;
-    let control = CancellablePipe::connect(paths.0, bounds.0, bounds.1.clone())?;
-    let native = CancellablePipe::connect(paths.1, bounds.0, bounds.1.clone())?;
+    let paths = (paths.0.to_owned(), paths.1.to_owned());
+    let cancelled = bounds.1.clone();
+    // Origin verification can launch the bounded OS verifier. Keep it and pipe
+    // opening off the async executor, retaining the same handles on return.
+    let (control, native, mut launch) = tokio::task::spawn_blocking(move || {
+        let launch = ParentLaunch::from_environment(
+            |parent| {
+                crate::quick_support_child::windows_parent::origin::verify_parent(parent, &origin)
+            },
+            move || {
+                Ok((
+                    configuration()?,
+                    crate::quick_support_receiver::fresh_challenge()?,
+                ))
+            },
+        )?;
+        let control = CancellablePipe::connect(&paths.0, bounds.0, cancelled.clone())?;
+        let native = CancellablePipe::connect(&paths.1, bounds.0, cancelled)?;
+        Ok::<_, quick_support_guard::Denied>((control, native, launch))
+    })
+    .await??;
     create_quick_support_connection(
         server,
         control,

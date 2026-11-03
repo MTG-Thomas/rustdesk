@@ -1,6 +1,8 @@
 #[cfg(windows)]
 extern crate self as hbb_common;
 #[cfg(windows)]
+pub use base64;
+#[cfg(windows)]
 pub use tokio;
 #[cfg(windows)]
 #[path = "windows/native_pipe.rs"]
