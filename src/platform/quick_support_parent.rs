@@ -426,7 +426,10 @@ mod tests {
         assert!(capture_parent().is_err());
         struct Consent;
         impl quick_support_guard::LocalConsent for Consent {
-            fn receiver_approved(&mut self) -> Result<(), Denied> {
+            fn receiver_approved(
+                &mut self,
+                _request: &quick_support_guard::ConsentRequest,
+            ) -> Result<(), Denied> {
                 panic!("unverified launch reached consent")
             }
         }

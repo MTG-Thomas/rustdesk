@@ -9,6 +9,10 @@ use std::{io::Read, time::Instant};
 #[path = "platform/quick_support_parent.rs"]
 pub mod windows_parent;
 
+#[cfg(windows)]
+#[path = "platform/quick_support_consent.rs"]
+pub mod windows_consent;
+
 pub enum Event {
     ParentControl,
     Grant { token: String, proof: Vec<u8> },

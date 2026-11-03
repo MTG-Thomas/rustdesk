@@ -12,6 +12,12 @@ pub struct ChildConnection {
 }
 
 impl ChildConnection {
+    /// Snapshot an authenticated pending request for the receiver-local UI.
+    /// This is not approval; recheck admission after the UI returns.
+    pub fn consent_request(&self, now: Instant) -> Result<super::ConsentRequest, Denied> {
+        self.control.consent_request(&self.admission, now)
+    }
+
     pub fn new(identity: ControlIdentity, fresh_challenge: String) -> Result<Self, Denied> {
         Ok(Self {
             control: ControlSession::new(identity)?,
