@@ -270,3 +270,40 @@ job, alongside all receiver tests. Linux tests and Windows-target compilation
 are separate evidence, neither establishing device or end-to-end acceptance.
 No product dependency or desktop lockfile changes: the fixture's Windows crate
 is a target-specific dev dependency matching the desktop's existing version.
+
+## Receiver handoff entry API
+
+`windows_parent::run_inherited` connects the retained-handle handoff to local
+pipe opening and the existing control/grant/consent/frame driver. The caller
+must provide an independent expected-parent origin verifier and signed launch
+configuration verifier, plus isolated consent, bounded scheduling and native
+dispatch. Neither verifier has a production default. The original trusted-handle
+constructor remains unchanged; a process handle obtained from environment data
+cannot silently satisfy its trust precondition.
+
+Capture consumes/removes `BIFROST_QS_PARENT_HANDLE` and accepts only a canonical
+positive decimal identifier for an inheritable, live process handle with query
+and synchronization rights. Self-process/pseudo, malformed, non-inheritable,
+dead and insufficient-rights handles deny initialization. Capture duplicates a
+fresh owned handle with limited rights and inheritance disabled, then clears the
+source slot's inheritance flag. The identifier alone does not authenticate an
+origin or grant consent; the separate origin verifier runs before opening pipes,
+and both pipe peers and signed configuration are still checked before payloads.
+Control and native paths must be distinct and use the existing local namespace.
+
+The safe API never constructs an owner for or closes an untrusted numeric source
+slot: it might alias another Rust owner. That original slot remains until its
+owner closes it or the contained child exits. In the launcher handoff case it is
+bounded by mandatory child-process termination; the new owned copy closes on
+return/failure. The OS host must still stop the Job Object/lease and exit on both
+normal stop and denial, clear pending events and prove bounded cleanup. This is
+not a claim of zero live handles before child exit.
+
+A Windows synthetic fixture covers identifier consumption/reuse, malformed,
+self, insufficient-rights and dead candidates, non-inheritable copies, origin
+rejection and wrong-peer entry rejection before configuration, consent, scheduler
+or native dispatch. Its candidate process is synthetic; metadata checks do not
+prove actual launcher ancestry. The actual default startup hook remains disabled.
+Trusted origin/configuration implementations, dedicated control production,
+cancellable reads, real UI/capability wiring and composed Windows/device
+acceptance remain required. No issuer keys or production authority are created.
