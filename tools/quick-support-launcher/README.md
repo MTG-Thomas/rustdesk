@@ -267,3 +267,31 @@ out-of-order control, and require fresh local consent before privileged traffic.
 Revocation and expiry must terminate admission and transport before cleanup.
 These are acceptance requirements, not an implemented or authorized new issuer.
 Synthetic keys used by verifier tests must never become application trust roots.
+
+## Source-only retained-parent handoff
+
+`contained.StartSuspendedWithParent` is an additive launch variant for the future
+receiver host. The existing `StartSuspended` and `lifecycle.Run` are unchanged.
+It creates a query/synchronization-only handle to the launcher process and uses
+an explicit `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` containing only that handle,
+alongside the atomic Job Object attribute. Attribute or process-creation failure
+does not fall back to broad inheritance or post-creation containment. The local
+copy is closed after creation; the child owns its inherited copy.
+
+The private environment includes `BIFROST_QS_PARENT_HANDLE`, a decimal handle
+identifier, without copying the caller environment. This value is not a trust
+root, bootstrap signature, PID assertion or consent. The child must capture the
+inherited object once, clear its inheritance flag/remove the environment entry
+before creating descendants, retain it through the session, verify actual pipe
+server identities and independently verify signed launch configuration. This
+handoff is not connected to ordinary RustDesk startup and does not enable a
+control session. The dedicated control producer, real consent UI and bounded
+cancellable receiver host remain required source integration work.
+
+Synthetic Windows fixtures inspect the inherited access mask with NtQueryObject,
+compare a deliberately unrelated inheritable event by kernel object identity,
+check atomic containment before resume and verify close/cancellation cleanup.
+The handle-list API is implemented in a parallel feature function to preserve
+the established launch path under the repository's regression-surface rules.
+Cross-compilation and vet are source evidence; actual Windows execution in the
+existing helper CI job is required before claiming the fixture behavior passed.
