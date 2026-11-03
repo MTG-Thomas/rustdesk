@@ -392,6 +392,10 @@ pub struct Admission {
 }
 
 impl Admission {
+    pub(crate) fn awaiting_consent(&self, receiver: &Receiver, now: Instant) -> bool {
+        !self.closed && self.grant_verified && !self.customer_approved && receiver.active(now)
+    }
+
     /// The transport must supply a new OS-random challenge for every connection.
     pub fn new(challenge: String) -> Result<Self, Denied> {
         if !(32..=256).contains(&challenge.len()) {
@@ -448,7 +452,7 @@ impl Admission {
 }
 
 mod control;
-pub use control::{ControlIdentity, ControlSession};
+pub use control::{ConsentRequest, ControlIdentity, ControlSession};
 
 mod child;
 pub use child::ChildConnection;

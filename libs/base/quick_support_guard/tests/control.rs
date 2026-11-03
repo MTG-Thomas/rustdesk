@@ -321,12 +321,102 @@ impl<P, N> VerifiedLaunch<P, N> for SyntheticLaunch<'_> {
 }
 struct SyntheticConsent(bool);
 impl LocalConsent for SyntheticConsent {
-    fn receiver_approved(&mut self) -> Result<(), Denied> {
+    fn receiver_approved(
+        &mut self,
+        _request: &quick_support_guard::ConsentRequest,
+    ) -> Result<(), Denied> {
         if self.0 {
             Ok(())
         } else {
             Err(Denied)
         }
+    }
+}
+
+#[test]
+fn consent_prompt_requires_verified_pending_request_and_rechecks_expiry_after_ui() {
+    use std::cell::Cell;
+    struct Prompt<'a> {
+        calls: &'a Cell<usize>,
+        now: &'a Cell<Instant>,
+        session: &'a str,
+        technician: &'a str,
+        reject: bool,
+        expire: bool,
+    }
+    impl LocalConsent for Prompt<'_> {
+        fn receiver_approved(
+            &mut self,
+            request: &quick_support_guard::ConsentRequest,
+        ) -> Result<(), Denied> {
+            self.calls.set(self.calls.get() + 1);
+            assert_eq!(request.session_id(), self.session);
+            assert_eq!(request.technician_id(), self.technician);
+            assert!(request.deadline() > self.now.get());
+            if self.expire {
+                self.now.set(self.now.get() + Duration::from_secs(61));
+            }
+            if self.reject {
+                Err(Denied)
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let f = fixture();
+    let claims: Value = serde_json::from_slice(
+        &URL_SAFE_NO_PAD
+            .decode(f.grant.split('.').nth(1).unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    let technician = claims["sub"].as_str().unwrap();
+    for mode in 0..5 {
+        let start = Instant::now();
+        let now = Cell::new(start + Duration::from_secs(1));
+        let calls = Cell::new(0);
+        let mut adapter = PipeAdapter::new(
+            std::io::Cursor::new(control_frame(&f.bootstrap)),
+            std::io::Cursor::new(vec![4, 7]),
+            &mut SyntheticLaunch {
+                fixture: &f,
+                allowed: true,
+            },
+        )
+        .unwrap();
+        adapter.parent_control(|| (1000, start)).unwrap();
+        if mode != 0 {
+            let proof = SigningKey::from_bytes(&[9; 32])
+                .sign(
+                    &proof_message(&f.grant, "01234567890123456789012345678901", &f.receiver_id)
+                        .unwrap(),
+                )
+                .to_bytes();
+            adapter.request(&f.grant, &proof, 1001, now.get()).unwrap();
+        }
+        if mode == 1 {
+            now.set(start + Duration::from_secs(61));
+        }
+        let mut prompt = Prompt {
+            calls: &calls,
+            now: &now,
+            session: &f.session_id,
+            technician,
+            reject: mode == 2,
+            expire: mode == 3,
+        };
+        assert_eq!(
+            adapter.approve_locally(&mut prompt, || now.get()).is_ok(),
+            mode == 4
+        );
+        let count = usize::from(mode >= 2);
+        assert_eq!(calls.get(), count);
+        assert!(adapter.approve_locally(&mut prompt, || now.get()).is_err());
+        assert_eq!(
+            calls.get(),
+            count,
+            "terminal/approved admission must not prompt again"
+        );
     }
 }
 struct ObservedStream {
