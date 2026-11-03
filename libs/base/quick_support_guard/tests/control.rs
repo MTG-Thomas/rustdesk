@@ -1048,16 +1048,15 @@ fn receiver_interop_child() {
 fn session_length_binding_accepts_only_live_bounded_terminal_revoke() {
     let f = fixture();
     let start = Instant::now();
-    for (hard_expiry, now, accepted) in [
-        (4600, 1700, true),
-        (1730, 1700, true),
-        (1700, 1700, false),
-    ] {
+    for (hard_expiry, now, accepted) in
+        [(4600, 1700, true), (1730, 1700, true), (1700, 1700, false)]
+    {
         let outer = resign(&f.bootstrap, |control| {
             let bootstrap = control["bootstrap"].as_str().unwrap();
             control["bootstrap"] = resign(bootstrap, |claims| {
                 claims["exp"] = hard_expiry.into();
-            }).into();
+            })
+            .into();
         });
         let mut session = session(&f);
         session.apply(&outer, 1000, start).unwrap();
