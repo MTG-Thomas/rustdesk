@@ -1038,7 +1038,7 @@ fn quick_support_clock() -> Result<(u64, std::time::Instant), quick_support_guar
 /// configuration and a fresh challenge. Bounds come from that trusted launch.
 #[cfg(all(windows, feature = "quick-support-child"))]
 pub async fn run_quick_support_inherited(
-    server: ServerPtr,
+    make_server: impl FnOnce() -> ServerPtr,
     paths: (&str, &str),
     bounds: (std::time::Instant, Arc<std::sync::atomic::AtomicBool>),
     origin: crate::quick_support_child::windows_parent::origin::ParentTrust,
@@ -1066,13 +1066,14 @@ pub async fn run_quick_support_inherited(
                 ))
             },
         )?;
+        crate::quick_support_child::windows_parent::profile::install_after_parent_verification()?;
         let control = CancellablePipe::connect(&paths.0, bounds.0, cancelled.clone())?;
         let native = CancellablePipe::connect(&paths.1, bounds.0, cancelled)?;
         Ok::<_, quick_support_guard::Denied>((control, native, launch))
     })
     .await??;
     create_quick_support_connection(
-        server,
+        make_server(),
         control,
         native,
         &mut launch,

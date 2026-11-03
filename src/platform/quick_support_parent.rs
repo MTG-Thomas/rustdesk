@@ -25,6 +25,9 @@ use windows::Win32::{
 #[path = "quick_support_origin.rs"]
 pub mod origin;
 
+#[path = "quick_support_profile.rs"]
+pub mod profile;
+
 pub struct LocalPipe(File);
 
 #[path = "quick_support_bounded_pipe.rs"]

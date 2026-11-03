@@ -1,4 +1,7 @@
 #[cfg(windows)]
+#[path = "../../../hbb_common/src/private_profile.rs"]
+pub mod private_profile;
+#[cfg(windows)]
 extern crate self as hbb_common;
 #[cfg(windows)]
 pub use base64;
@@ -889,6 +892,7 @@ fn receiver_interop_child() {
                     unsafe { GetProcessId(HANDLE(handle.as_raw_handle())) },
                     input.parent_pid
                 );
+                desktop_child::windows_parent::profile::install_after_parent_verification()?;
                 parent.replace(Some(handle.try_clone_to_owned().unwrap()));
                 Ok(())
             },

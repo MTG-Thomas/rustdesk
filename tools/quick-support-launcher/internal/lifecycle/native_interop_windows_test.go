@@ -120,9 +120,14 @@ func TestGoRustReceiverInteroperability(t *testing.T) {
 			if err != nil || os.WriteFile(filepath.Join(path, "receiver.fixture.json"), encoded, 0600) != nil {
 				t.Fatal("cannot stage fixture input")
 			}
-			child, err := contained.StartSuspendedWithParent(ctx, executable, []string{"--ignored", "--exact", "receiver_interop_child", "--nocapture"}, path)
+			profile, err := directory.ProfileHandle()
 			if err != nil {
 				t.Fatal(err)
+			}
+			child, err := contained.StartSuspendedWithProfile(ctx, executable, []string{"--ignored", "--exact", "receiver_interop_child", "--nocapture"}, path, profile)
+			profileErr := windows.CloseHandle(profile)
+			if err != nil || profileErr != nil {
+				t.Fatal(err, profileErr)
 			}
 			defer child.Close()
 			handle, err := child.ProcessHandle()

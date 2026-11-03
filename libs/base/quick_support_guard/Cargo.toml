@@ -20,7 +20,7 @@ serde_json = "1.0"
 uuid = "=1.18.1"
 
 [target.'cfg(windows)'.dev-dependencies]
-windows = { version = "=0.61.1", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "=0.61.1", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging"] }
 tokio = { version = "=1.51.6", features = ["rt", "net", "io-util", "time"] }
 
 sha2 = "=0.10.9"

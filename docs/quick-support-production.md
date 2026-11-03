@@ -291,6 +291,28 @@ install the profile in the Rust child: validated adoption and lifetime retention
 must precede any Config/Server initialization. The environment's numeric handle
 is an identifier, not independent origin/session authority. Startup remains off.
 
+The Rust Windows inherited entry now validates the profile handle after parent
+origin verification and before constructing the server. It consumes the handle
+identifier once, requires inheritance, duplicates read-only rights without
+inheritance, and checks fixed-local-drive placement, the private namespace,
+non-reparse directory identity, current-user ownership and the protected
+single-owner inheritable DACL. Ancestors are pinned from the drive root inward
+without delete sharing; the inherited profile and ancestry pins remain alive
+until process exit. An earlier configuration/profile selection causes refusal,
+not a fallback into the ordinary user's profile.
+
+The feature-specific entry accepts a server factory, so an already-initialized
+Server cannot accidentally precede profile installation through that API. No
+ordinary server constructor or startup path changes. The existing Go/Rust
+Windows interoperability fixture now hands the real launcher-created directory
+handle to the synthetic receiver before its bootstrap/consent/revocation flow.
+Additional isolated-process fixtures cover malformed/non-inheritable handles,
+file objects, mismatched directories, ordinary ACLs and immutable installation.
+Windows cross-checks are not native execution; these additions still require
+actual Windows CI and later complete signed application/device acceptance.
+Authoritative session configuration and default startup routing remain separate;
+profile isolation does not create an issuer, consent or control authority.
+
 ## Persistent receiver Stop surface (source only)
 
 The private receiver keeps the existing explicit local Allow dialog, then creates
