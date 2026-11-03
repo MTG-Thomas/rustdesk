@@ -135,3 +135,32 @@ available. Existing signing workflow approvals, human-only identity verification
 and actual customer consent cannot be synthesized. Prepare source, tests and
 release evidence while those steps are unavailable; do not replace them with
 synthetic acceptance or bypass normal approval/security controls.
+
+### Native login protocol plumbing (source only)
+
+The optional desktop client now has in-memory workstation login material and a
+separate `LoginRequest.quick_support_auth` field (18) for the grant and
+challenge-bound workstation signature. The supplied signer creates no keys here.
+The adapter refuses alternate-service requests, wrong receivers, short legacy
+challenges and signer failures; it clears password, device trust, OS login and
+legacy option fields instead of sending two authorization paths.
+
+Until the private receiver context is connected, the native receiver explicitly
+closes any login containing this field before ordinary RustDesk authorization.
+Private startup remains refused. This patch does not provide a working control
+session or production authentication/consent acceptance.
+
+Local proof: two synthetic workstation tests; the existing verifier/control/
+profile/startup suite; and the native adapter test compiled against newly
+generated message types. Existing desktop CI additionally runs the adapter test
+with the opt-in feature. Full application build results and Windows runtime
+results must be recorded separately. The next integration is the authenticated
+private-child context, fresh receiver challenge, local consent and terminal
+revocation gate in the actual native connection lifecycle.
+
+Regression surface: the client gains an optional in-memory field and opt-in
+login hook; ordinary clients keep the existing message construction. The
+protobuf adds an unused optional field. The server's only new default-path
+behavior is refusing that field, preventing unsupported authorization fallback.
+No shared function signatures, permissions, signing material or startup policy
+change.

@@ -2845,6 +2845,13 @@ impl Connection {
     }
 
     async fn on_message(&mut self, msg: Message) -> bool {
+        // Until the authenticated private-child context is installed here, a
+        // Quick Support login must not fall through to ordinary authorization.
+        if matches!(msg.union.as_ref(), Some(message::Union::LoginRequest(lr)) if lr.quick_support_auth.is_some()) {
+            self.send_close_reason_no_retry("Quick Support receiver is not ready").await;
+            self.on_close("Quick Support receiver is not ready", true).await;
+            return false;
+        }
         if let Some(message::Union::Misc(misc)) = &msg.union {
             // Move the CloseReason forward, as this message needs to be received when unauthorized, especially for kcp.
             if let Some(misc::Union::CloseReason(s)) = &misc.union {

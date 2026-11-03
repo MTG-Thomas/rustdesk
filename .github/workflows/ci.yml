@@ -188,6 +188,13 @@ jobs:
         command: check
         args: --locked --features quick-support-child --target=${{ matrix.job.target }}
 
+    - name: Test native Quick Support login plumbing
+      uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1
+      with:
+        use-cross: ${{ matrix.job.use-cross }}
+        command: test
+        args: --locked --lib --features quick-support-child --target=${{ matrix.job.target }} quick_support_login::tests
+
     - name: Test actual Quick Support profile Config hooks
       uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1
       with:
