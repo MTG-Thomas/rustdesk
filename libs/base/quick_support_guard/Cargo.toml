@@ -2,17 +2,19 @@
 name = "quick_support_guard"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.75"
 license = "AGPL-3.0-only"
 publish = false
 
-# This primitive has its own lockfile and toolchain qualification. Keep Cargo
+# This primitive has its own lockfile and minimum-toolchain qualification. Keep Cargo
 # from enrolling it in the desktop application's ancestor workspace.
 [workspace]
 
 [dependencies]
 base64 = "0.22.1"
-ed25519-dalek = "2.2.0"
+# Keep the verifier compatible with the desktop minimum; CI tests the locked
+# graph on 1.75 as well as the newer diagnostic/audit toolchain.
+ed25519-dalek = "=2.1.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-uuid = "1.18"
+uuid = "=1.18.1"

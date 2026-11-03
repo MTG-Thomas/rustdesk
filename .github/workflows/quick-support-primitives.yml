@@ -26,7 +26,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Install pinned Rust tools
-        run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
+          rustup toolchain install 1.75.0 --profile minimal
+      - name: Verify desktop minimum Rust compatibility
+        run: cargo +1.75.0 test --locked
       - name: Verify strict formatting, tests and diagnostics
         run: |
           cargo +1.90.0 fmt --all --check
