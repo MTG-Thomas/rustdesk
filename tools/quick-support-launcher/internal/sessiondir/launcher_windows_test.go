@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -41,9 +42,17 @@ func TestPrivateDirectoryContainedChildAndAuthenticatedPipeCompose(t *testing.T)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	child, err := contained.StartSuspended(ctx, executable,
-		[]string{"-test.run=^TestOwnedComposedLauncherChild$", "--", "qs-composed", pipe.Path(), proof}, path)
+	profile, err := directory.ProfileHandle()
 	if err != nil {
+		t.Fatal(err)
+	}
+	if wrong, err := contained.StartSuspendedWithProfile(ctx, executable, nil, t.TempDir(), profile); wrong != nil || err != contained.ErrRejected {
+		t.Fatal("profile for another working directory accepted")
+	}
+	child, err := contained.StartSuspendedWithProfile(ctx, executable,
+		[]string{"-test.run=^TestOwnedComposedLauncherChild$", "--", "qs-composed", pipe.Path(), proof}, path, profile)
+	closeErr := windows.CloseHandle(profile)
+	if err != nil || closeErr != nil {
 		t.Fatal("private directory could not be used by the contained child", err)
 	}
 	defer child.Close()
@@ -100,6 +109,38 @@ func TestPrivateDirectoryContainedChildAndAuthenticatedPipeCompose(t *testing.T)
 func TestOwnedComposedLauncherChild(t *testing.T) {
 	if len(os.Args) < 4 || os.Args[len(os.Args)-3] != "qs-composed" {
 		t.Skip("owned subprocess entry")
+	}
+	value, err := strconv.ParseUint(os.Getenv("BIFROST_QS_PROFILE_HANDLE"), 10, 64)
+	if err != nil || value == 0 {
+		t.Fatal("profile handle missing")
+	}
+	os.Unsetenv("BIFROST_QS_PROFILE_HANDLE")
+	profile := windows.Handle(value)
+	defer windows.CloseHandle(profile)
+	if windows.SetHandleInformation(profile, windows.HANDLE_FLAG_INHERIT, 0) != nil {
+		t.Fatal("profile inheritance could not be cleared")
+	}
+	var info windows.ByHandleFileInformation
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || !ownerOnly(profile, user.User.Sid) || windows.GetFileInformationByHandle(profile, &info) != nil ||
+		info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 || info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		t.Fatal("profile ownership or attributes invalid")
+	}
+	cwdName, err := windows.UTF16FromString(filepath.Dir(os.Args[len(os.Args)-1]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := windows.CreateFile(&cwdName[0], windows.GENERIC_READ,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil,
+		windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(view)
+	var expectedInfo windows.ByHandleFileInformation
+	if windows.GetFileInformationByHandle(view, &expectedInfo) != nil || info.VolumeSerialNumber != expectedInfo.VolumeSerialNumber ||
+		info.FileIndexHigh != expectedInfo.FileIndexHigh || info.FileIndexLow != expectedInfo.FileIndexLow {
+		t.Fatal("inherited profile does not bind working directory")
 	}
 	pipePath, proof := os.Args[len(os.Args)-2], os.Args[len(os.Args)-1]
 	parent, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.SYNCHRONIZE, false, uint32(os.Getppid()))

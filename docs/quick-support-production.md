@@ -275,6 +275,22 @@ Private Trust rehearsal; that inventory is not current Public Trust evidence.
 Keep private root imports confined to the approved ephemeral rehearsal and never
 install a private root on customer machines to obtain a passing signature check.
 
+The receiver-control launcher now duplicates the creator's pinned profile-directory
+handle with read/synchronize rights, binds its file ID to the child's working
+directory, and includes only that handle and the restricted parent-process handle
+in the explicit inheritance list. The original parent-only API remains available
+without a profile handle. The launcher closes its temporary duplicates before
+normal child/job teardown and directory cleanup.
+
+The composed Windows helper fixture consumes the inherited profile handle,
+checks owner/protected DACL, directory/reparse attributes and working-directory
+file identity, then exercises authenticated IPC and cleanup. A mismatched
+working directory is rejected before launch. Local Windows cross-compilation and
+vet are preparation; native CI execution is required evidence. This does not yet
+install the profile in the Rust child: validated adoption and lifetime retention
+must precede any Config/Server initialization. The environment's numeric handle
+is an identifier, not independent origin/session authority. Startup remains off.
+
 ## Persistent receiver Stop surface (source only)
 
 The private receiver keeps the existing explicit local Allow dialog, then creates
