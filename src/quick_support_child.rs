@@ -5,6 +5,10 @@
 use quick_support_guard::{Denied, LocalConsent, PipeAdapter, VerifiedLaunch};
 use std::{io::Read, time::Instant};
 
+#[cfg(windows)]
+#[path = "platform/quick_support_parent.rs"]
+pub mod windows_parent;
+
 pub enum Event {
     ParentControl,
     Grant { token: String, proof: Vec<u8> },
