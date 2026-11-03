@@ -44,6 +44,8 @@ mod clipboard;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod core_main;
 mod quick_support_startup;
+#[cfg(feature = "quick-support-child")]
+pub mod quick_support_child;
 mod custom_server;
 mod lang;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

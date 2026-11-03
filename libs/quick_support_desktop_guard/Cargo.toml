@@ -1,0 +1,23 @@
+[package]
+name = "quick_support_guard"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "AGPL-3.0-only"
+publish = false
+
+# The desktop adapter compiles the canonical guard source without nesting a
+# dependency workspace below the existing base workspace member.
+[workspace]
+
+[lib]
+path = "../base/quick_support_guard/src/lib.rs"
+
+[dependencies]
+base64 = "0.22.1"
+# Keep the verifier compatible with the desktop minimum; CI tests the locked
+# graph on 1.75 as well as the newer diagnostic/audit toolchain.
+ed25519-dalek = "=2.1.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = "=1.18.1"

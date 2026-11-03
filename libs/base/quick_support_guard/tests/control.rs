@@ -8,6 +8,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
+#[path = "../../../../src/quick_support_child.rs"]
+mod desktop_child;
+
 #[derive(Deserialize)]
 struct Fixture {
     issuer: String,
@@ -635,5 +638,95 @@ fn pipe_adapter_retries_interruption_but_never_resumes_failed_partial_input() {
         }
         drop(adapter);
         assert_eq!(drops.get(), 2);
+    }
+}
+
+#[test]
+fn desktop_child_requires_separate_consent_and_closes_on_stop_or_failure() {
+    use desktop_child::Event;
+    let f = fixture();
+    let start = Instant::now();
+    for mode in 0..6 {
+        let drops = std::rc::Rc::new(std::cell::Cell::new(0));
+        let reads = std::rc::Rc::new(std::cell::Cell::new(0));
+        let expired = std::cell::Cell::new(false);
+        let mut parent = control_frame(&f.bootstrap);
+        if mode == 3 {
+            parent.extend(control_frame(&f.bootstrap));
+        } else if mode == 4 {
+            let revoke = resign(&f.revoke, |v| {
+                v["sequence"] = 2.into();
+                v["iat"] = 1001.into();
+                v["exp"] = 1061.into();
+            });
+            let mut verifier = session(&f);
+            verifier.apply(&f.bootstrap, 1001, start).unwrap();
+            verifier.apply(&revoke, 1001, start).unwrap();
+            parent.extend(control_frame(&revoke));
+        }
+        let proof = SigningKey::from_bytes(&[9; 32])
+            .sign(
+                &proof_message(&f.grant, "01234567890123456789012345678901", &f.receiver_id)
+                    .unwrap(),
+            )
+            .to_bytes()
+            .to_vec();
+        let mut events = if mode == 2 {
+            vec![Event::NativeFrame]
+        } else if mode == 5 {
+            vec![Event::Tick]
+        } else {
+            vec![
+                Event::Grant {
+                    token: f.grant.clone(),
+                    proof,
+                },
+                Event::LocalApproval,
+                if mode == 3 || mode == 4 {
+                    Event::ParentControl
+                } else {
+                    Event::NativeFrame
+                },
+                Event::Stop,
+            ]
+        }
+        .into_iter();
+        let mut dispatched = 0;
+        let result = desktop_child::run(
+            observed(parent, &drops, &reads),
+            observed(vec![4, 7], &drops, &reads),
+            &mut SyntheticLaunch {
+                fixture: &f,
+                allowed: true,
+            },
+            &mut SyntheticConsent(mode != 1),
+            || {
+                if mode == 5 {
+                    expired.set(true);
+                }
+                events.next().ok_or(Denied)
+            },
+            || {
+                if expired.get() {
+                    (1061, start + Duration::from_secs(61))
+                } else {
+                    (1001, start + Duration::from_secs(1))
+                }
+            },
+            |payload| {
+                assert_eq!(payload, [7]);
+                dispatched += 1;
+                Ok(())
+            },
+        );
+        assert_eq!(result.is_ok(), mode == 0);
+        assert_eq!(dispatched, usize::from(mode == 0));
+        assert_eq!(drops.get(), 2);
+        if mode == 4 {
+            assert!(
+                matches!(events.next(), Some(Event::Stop)),
+                "revoke must return without another event"
+            );
+        }
     }
 }

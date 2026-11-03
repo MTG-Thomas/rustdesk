@@ -200,3 +200,41 @@ Regression surface: `core_main.rs` adds one early private-invocation refusal;
 `lib.rs` registers its dependency-free parser. No normal startup path changes.
 The guard test suite imports that exact parser source; it does not prove a
 complete application build or Windows execution of `core_main`.
+
+## Opt-in desktop linkage and event driver
+
+The desktop `quick-support-child` feature links the canonical guard source and
+exports `quick_support_child::run`. It remains absent from default features;
+`core_main` still refuses private launches until an OS host is qualified. The
+new driver initializes only from the verified parent-control pipe, routes grant
+proofs through the receiver, requires a separate `LocalConsent` callback, and
+passes native frames to the supplied connection dispatcher only after admission.
+Readiness events cannot substitute for any of those checks. Replay, consent
+failure, premature native input, scheduler failure and signed revocation return
+through stream teardown. Timer events check the signed lease even before consent.
+
+`libs/quick_support_desktop_guard/Cargo.toml` compiles the existing canonical
+`src/lib.rs`; it contains no duplicate verifier implementation. This adapter
+manifest lives outside the existing `libs/base` workspace member because Cargo
+otherwise enrolls its nested path dependency into that member's workspace,
+conflicting with the standalone qualification workspace. A CI check requires
+identical package/dependency contracts and the exact canonical source path.
+The desktop lockfile adds Dalek/Ed25519, enables the existing curve digest
+feature, and selects UUID 1.18.1 for the guard's compatible requirement.
+
+Tests compile the exact application driver on Rust 1.75 and 1.90 with injected
+verified launch, scheduler and local consent fixtures. The existing desktop CI
+also checks the opt-in feature after its ordinary build; pending CI is not local
+full-application evidence. Existing paths changed: desktop manifest/lock for the
+optional dependency, `lib.rs` for its gated export, and guard control/child/pipe
+methods for a terminal timer check. No existing login, capability or UI path is
+routed through a new abstraction; ordinary startup remains unchanged.
+
+Still needed: Windows retained-parent/configuration delivery and dedicated
+control channel producer; a cancellable OS event scheduler that prioritizes
+control/expiry over blocked native reads; real receiver UI approval/rejection and
+native login/capability hooks; Job Object/transport cleanup composition. `run`
+returns after dropping authorization and both streams, but its owner must close
+the process/job and lease. No production host, issuer key or fabricated consent
+is supplied. These remain source integration tasks before separately authorized
+signed-release/device acceptance. No activation is enabled by the build feature.
