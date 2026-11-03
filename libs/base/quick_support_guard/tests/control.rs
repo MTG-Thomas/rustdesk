@@ -758,9 +758,10 @@ fn receiver_interop_child() {
         allow_consent: bool,
     }
     fn publish(path: &Path, bytes: &[u8]) {
-        let temporary = path.with_extension("tmp");
-        fs::write(&temporary, bytes).unwrap();
-        fs::rename(temporary, path).unwrap();
+        // The private directory is pinned against rename/delete. Publish a
+        // separate empty marker only after the one-shot payload has been closed.
+        fs::write(path, bytes).unwrap();
+        fs::write(path.with_extension("complete"), []).unwrap();
     }
     let directory = PathBuf::from(std::env::var_os("APPDATA").unwrap());
     let input: Input =
@@ -814,8 +815,8 @@ fn receiver_interop_child() {
                     publish(&directory.join("challenge.ready"), challenge.as_bytes());
                     let timeout = Instant::now() + Duration::from_secs(5);
                     let proof = loop {
-                        if let Ok(proof) = fs::read(directory.join("grant.proof")) {
-                            break proof;
+                        if directory.join("grant.complete").exists() {
+                            break fs::read(directory.join("grant.proof")).unwrap();
                         }
                         assert!(Instant::now() < timeout, "fixture proof missing");
                         std::thread::sleep(Duration::from_millis(10));

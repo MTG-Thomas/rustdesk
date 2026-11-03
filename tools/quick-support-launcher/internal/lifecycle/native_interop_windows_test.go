@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,9 +24,9 @@ func waitFixture(ctx context.Context, path string) ([]byte, error) {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		data, err := os.ReadFile(path)
+		_, err := os.Stat(strings.TrimSuffix(path, filepath.Ext(path)) + ".complete")
 		if err == nil {
-			return data, nil
+			return os.ReadFile(path)
 		}
 		if !os.IsNotExist(err) {
 			return nil, err
@@ -153,8 +154,7 @@ func TestGoRustReceiverInteroperability(t *testing.T) {
 			}
 			// Reuse the existing deterministic workstation identity; no production key.
 			proof := ed25519.Sign(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{9}, 32)), message)
-			temporary := filepath.Join(path, "grant.proof.tmp")
-			if os.WriteFile(temporary, proof, 0600) != nil || os.Rename(temporary, filepath.Join(path, "grant.proof")) != nil {
+			if os.WriteFile(filepath.Join(path, "grant.proof"), proof, 0600) != nil || os.WriteFile(filepath.Join(path, "grant.complete"), nil, 0600) != nil {
 				t.Fatal("cannot deliver synthetic proof")
 			}
 			if approved {
