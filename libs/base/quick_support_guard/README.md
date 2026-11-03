@@ -328,3 +328,32 @@ fixture also uses this entry for authenticated framed control and native input.
 Actual Windows CI execution must qualify these tests. Trusted origin/configuration,
 real local consent, control-priority scheduling and production startup remain
 separate prerequisites; this entry does not activate them or remote control.
+
+## Authenticated local consent context
+
+`ChildConnection::consent_request` returns an immutable prompt snapshot only
+after workstation proof, while admission is pending and its lease is active.
+It exposes the verified technician/session references and the current monotonic
+deadline, without a public constructor or serialized approval. `LocalConsent`
+receives that snapshot. The pipe adapter checks eligibility before invoking the
+UI and rechecks admission/expiry afterward. Unauthenticated, expired, rejected
+or already approved connections cannot prompt again through this entry.
+
+`quick_support_child::windows_consent::WindowsConsent` uses a receiver-local
+native TaskDialog, with Cancel as the default. Only its explicit Allow support
+button may succeed; dismissal, API failure, expiry and cancellation deny. A
+timer dismisses a cancelled/expired prompt, and the result is checked again
+after return. The host must signal cancellation independently and never reset
+it for the same connection. Do not hold the session/control lock while waiting
+for UI: process controls/expiry independently and recheck before admission.
+
+The desktop already has the required Common Controls v6 manifest. Standalone
+MSVC acceptance executables declare the same dependency so native API linkage
+can be tested. Automated checks cover invalid native dialog configuration and
+decision/expiry/cancellation policy; they do not prove a real customer approved
+or that the visual flow is accepted. Verified IDs are available in expanded
+details; friendly technician labels still require authenticated directory data.
+
+This adds the consent implementation, not a production startup registration.
+The actual native login/capability path, active-session indicator/Stop action,
+independent control host and real device/UI acceptance remain release gates.

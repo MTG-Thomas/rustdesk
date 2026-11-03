@@ -47,6 +47,26 @@ pub struct ControlSession {
     stopped: bool,
 }
 
+/// Immutable prompt context created only after workstation proof and an active
+/// lease. Display identity never comes from the native peer's self-reported name.
+pub struct ConsentRequest {
+    technician_id: String,
+    session_id: String,
+    deadline: Instant,
+}
+
+impl ConsentRequest {
+    pub fn technician_id(&self) -> &str {
+        &self.technician_id
+    }
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+    pub fn deadline(&self) -> Instant {
+        self.deadline
+    }
+}
+
 fn verify_control(token: &str, issuer_key: &[u8; 32]) -> Result<Control, Denied> {
     if token.len() > MAX_CONTROL_BYTES {
         return Err(Denied);
@@ -70,6 +90,24 @@ fn verify_control(token: &str, issuer_key: &[u8; 32]) -> Result<Control, Denied>
 }
 
 impl ControlSession {
+    pub(crate) fn consent_request(
+        &self,
+        admission: &Admission,
+        now: Instant,
+    ) -> Result<ConsentRequest, Denied> {
+        let receiver = self.receiver.as_ref().ok_or(Denied)?;
+        if self.stopped || !admission.awaiting_consent(receiver, now) {
+            return Err(Denied);
+        }
+        Ok(ConsentRequest {
+            technician_id: receiver.technician_id.clone(),
+            session_id: receiver.session_id.clone(),
+            deadline: receiver
+                .hard_deadline
+                .min(receiver.lease_deadline.ok_or(Denied)?),
+        })
+    }
+
     pub fn new(identity: ControlIdentity) -> Result<Self, Denied> {
         if !identity.issuer.starts_with("https://")
             || identity.issuer.len() > 256

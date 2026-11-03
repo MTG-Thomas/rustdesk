@@ -1,4 +1,4 @@
-use super::{ChildConnection, ControlIdentity, Denied};
+use super::{ChildConnection, ConsentRequest, ControlIdentity, Denied};
 use std::{io::Read, time::Instant};
 
 const MAX_CONTROL_BYTES: usize = 16384;
@@ -18,7 +18,7 @@ pub trait VerifiedLaunch<P, N> {
 /// Must be implemented by an isolated receiver-local event source, never IPC
 /// from an installed client, the parent control stream or remote peer packets.
 pub trait LocalConsent {
-    fn receiver_approved(&mut self) -> Result<(), Denied>;
+    fn receiver_approved(&mut self, request: &ConsentRequest) -> Result<(), Denied>;
 }
 
 /// Offline stream adapter. Own both streams; errors/EOF/exit drop them after
@@ -80,11 +80,12 @@ impl<P: Read, N: Read> PipeAdapter<P, N> {
     pub fn approve_locally(
         &mut self,
         source: &mut impl LocalConsent,
-        clock: impl FnOnce() -> Instant,
+        mut clock: impl FnMut() -> Instant,
     ) -> Result<(), Denied> {
         let result = (|| {
             self.streams.as_ref().ok_or(Denied)?;
-            source.receiver_approved()?;
+            let request = self.child.consent_request(clock())?;
+            source.receiver_approved(&request)?;
             self.child.approve_locally(clock())
         })();
         self.finish(result)
