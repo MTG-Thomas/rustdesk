@@ -1,6 +1,7 @@
 //! Connection-local native authorization. No startup, keys or trust defaults.
 use base::message_proto::{
-    message, misc, option_message::BoolOption, LoginRequest, Message, OptionMessage,
+    key_event, message, misc, option_message::BoolOption, ControlKey, LoginRequest, Message,
+    OptionMessage,
 };
 use quick_support_guard::{ChildConnection, Denied, LocalConsent, VerifiedLaunch};
 use std::{
@@ -30,6 +31,8 @@ pub(crate) struct Receiver {
     receiver_id: String,
     challenge: String,
     cancelled: Arc<AtomicBool>,
+    #[cfg(windows)]
+    support_ui: Mutex<Option<crate::quick_support_child::windows_consent::WindowsSessionConsent>>,
 }
 
 impl Receiver {
@@ -49,6 +52,8 @@ impl Receiver {
             receiver_id,
             challenge,
             cancelled,
+            #[cfg(windows)]
+            support_ui: Mutex::new(None),
         })
     }
 
@@ -141,15 +146,39 @@ impl Receiver {
 
     #[cfg(windows)]
     pub(crate) fn prompt(&self) -> Result<(), Denied> {
-        let mut source = crate::quick_support_child::windows_consent::WindowsConsent::new(
+        let mut source = crate::quick_support_child::windows_consent::WindowsSessionConsent::new(
             self.cancelled.clone(),
         );
-        self.consent(&mut source, Instant::now)
+        let result = self.consent(&mut source, Instant::now);
+        let stored = (|| {
+            let mut ui = self.support_ui.lock().map_err(|_| Denied)?;
+            if ui.is_some() {
+                return Err(Denied);
+            }
+            *ui = Some(source);
+            Ok(())
+        })();
+        self.finish(stored)?;
+        self.finish(result)?;
+        if self.authorized(Instant::now()) {
+            Ok(())
+        } else {
+            self.finish(Err(Denied))
+        }
     }
 
     #[cfg(not(windows))]
     pub(crate) fn prompt(&self) -> Result<(), Denied> {
         self.finish(Err(Denied))
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn finish_ui(&self) -> Result<(), Denied> {
+        let ui = self.support_ui.lock().map_err(|_| Denied)?.take();
+        if let Some(ui) = ui {
+            ui.finish()?;
+        }
+        Ok(())
     }
 
     pub(crate) fn active(&self, now: Instant) -> bool {
@@ -181,6 +210,25 @@ impl Receiver {
         }
         if !self.authorized(now) {
             return false;
+        }
+        if let Some(message::Union::KeyEvent(key)) = message.union.as_ref() {
+            // These native commands invoke OS/service actions, rather than the
+            // ordinary input sink, and can remove the local Stop surface.
+            let restricted = |value: ControlKey| {
+                matches!(
+                    value,
+                    ControlKey::CtrlAltDel | ControlKey::LockScreen | ControlKey::Power
+                )
+            };
+            if matches!(key.union.as_ref(), Some(key_event::Union::ControlKey(value))
+                if value.enum_value().map(restricted).unwrap_or(true))
+                || key
+                    .modifiers
+                    .iter()
+                    .any(|value| value.enum_value().map(restricted).unwrap_or(true))
+            {
+                return false;
+            }
         }
         if let Some(message::Union::Misc(value)) = message.union.as_ref() {
             if let Some(misc::Union::Option(option)) = value.union.as_ref() {
@@ -449,6 +497,24 @@ mod tests {
         let mut message = Message::new();
         message.set_mouse_event(Default::default());
         assert!(receiver.inbound(&message, now));
+        let mut key = base::message_proto::KeyEvent::new();
+        key.set_unicode(u32::from('a'));
+        message.set_key_event(key.clone());
+        assert!(receiver.inbound(&message, now));
+        for command in [
+            ControlKey::CtrlAltDel,
+            ControlKey::LockScreen,
+            ControlKey::Power,
+        ] {
+            key.set_control_key(command);
+            message.set_key_event(key.clone());
+            assert!(!receiver.inbound(&message, now));
+            key.set_unicode(u32::from('a'));
+            key.modifiers = vec![command.into()];
+            message.set_key_event(key.clone());
+            assert!(!receiver.inbound(&message, now));
+            key.modifiers.clear();
+        }
         message.set_file_action(Default::default());
         assert!(!receiver.inbound(&message, now));
         message.set_terminal_action(Default::default());
@@ -552,6 +618,22 @@ mod tests {
                 .is_err());
             assert!(!receiver.active(now));
         }
+        let receiver = prepared(now);
+        receiver.request(&mut login(), 1001, now).unwrap();
+        receiver
+            .consent(&mut Prompt(|_: &ConsentRequest| Ok(())), || now)
+            .unwrap();
+        // The local UI cancels before the async connection loop sees the event.
+        receiver.cancelled.store(true, Ordering::Release);
+        assert!(!receiver.authorized(now));
+        assert!(receiver
+            .dispatch(now, || -> Result<(), Denied> {
+                panic!("input survived customer Stop")
+            })
+            .is_err());
+        // Even an erroneous flag reset cannot restore the closed admission.
+        receiver.cancelled.store(false, Ordering::Release);
+        assert!(!receiver.authorized(now));
         #[cfg(not(windows))]
         assert!(prepared(now).prompt().is_err());
         let receiver = prepared(now);

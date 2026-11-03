@@ -312,3 +312,39 @@ Windows cross-checks are not native execution; these additions still require
 actual Windows CI and later complete signed application/device acceptance.
 Authoritative session configuration and default startup routing remain separate;
 profile isolation does not create an issuer, consent or control authority.
+
+## Persistent receiver Stop surface (source only)
+
+The private receiver keeps the existing explicit local Allow dialog, then creates
+an owned, topmost Stop window before returning approval to the native guard. The
+guard rechecks the grant/lease after UI readiness. Readiness is bounded by the
+verified request deadline; failure, expiry, cancellation or invisible creation
+denies access. Closing the window, Escape or Stop sets the shared cancellation
+signal before dismissal. Hiding/minimizing the window ends access on its timer;
+parent revocation and lease expiry close it through the same monotonic signal.
+No consent is inferred from a pipe connection or status-window readiness.
+The private protocol also refuses secure-attention, lock-screen and power-key
+commands (including modifier slots); those native helpers can remove the local
+Stop surface. Normal text/keyboard and pointer input remains available.
+
+The connection retains the UI worker until teardown. Shutdown signals first and
+joins UI work on a blocking worker, then joins the control reader even if UI
+cleanup reports an error. Drop only signals cancellation and never blocks Tokio;
+the launcher's existing kill-on-close Job Object remains the final process bound.
+There is no new startup route, service, trust default, key, deployment or activation.
+
+Focused synthetic Windows policy tests cover one-use readiness, actual callback
+cancellation before dismissal, invisible/expired/cancelled/API-failed creation,
+and failed worker joins. They do not show a valid consent dialog or simulate real
+customer acceptance. Native receiver tests additionally prove that local Stop
+denies queued input before the connection loop observes it and cannot resurrect
+admission. MSVC cross-check/Clippy passes with warnings denied; actual Windows
+execution, visual/focus/accessibility behavior, session lock/secure-desktop/outage
+behavior and full internal-device teardown remain mandatory acceptance work.
+
+Regression surface: the existing consent module gains an attended wrapper; only
+the private receiver stores that UI owner and uses it for approval. The private
+host cleanup joins it outside the async loop. Ordinary client authentication,
+installed Connection Manager IPC, public signatures, dependency locks and CI
+permissions/matrices remain unchanged. Signed startup/profile verification and
+release/dependency/security gates are still outstanding before activation.
