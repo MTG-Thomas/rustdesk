@@ -69,6 +69,17 @@ jobs:
           Invoke-WebRequest -Uri 'https://github.com/rustdesk/rustdesk/releases/download/1.5.0/rustdesk-1.5.0-x86_64.exe' -OutFile $artifact
           if ((Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash -ne '8555777215510d83d2d61c9dc984e4fcc838bd7e79f9d18a42585431f5e8bb47') { throw 'Signed fixture digest mismatch' }
           "BIFROST_QS_TEST_SIGNED_ARTIFACT=$artifact" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Build synthetic Rust receiver for native interoperability
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal
+          $messages = & cargo +1.90.0 test --locked --manifest-path ../../libs/base/quick_support_guard/Cargo.toml --test control --no-run --message-format=json
+          if ($LASTEXITCODE -ne 0) { throw 'Rust fixture compilation failed.' }
+          $artifact = $messages | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'control' -and $_.executable } | Select-Object -Last 1
+          if (-not $artifact -or -not (Test-Path -LiteralPath $artifact.executable -PathType Leaf)) { throw 'Exact Rust fixture executable missing.' }
+          "BIFROST_QS_TEST_RECEIVER_EXE=$($artifact.executable)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          'BIFROST_QS_REQUIRE_NATIVE_INTEROP=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Test downloads, public trust and publisher binding
         run: go test -race ./...
       - name: Check Go diagnostics

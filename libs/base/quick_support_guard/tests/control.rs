@@ -730,3 +730,139 @@ fn desktop_child_requires_separate_consent_and_closes_on_stop_or_failure() {
         }
     }
 }
+
+// Subprocess entry only. The Windows Go fixture invokes this explicitly and
+// checks its receipts; normal Rust test runs do not represent that integration.
+#[cfg(windows)]
+#[test]
+#[ignore = "invoked by the Go/Rust Windows interoperability fixture"]
+fn receiver_interop_child() {
+    use desktop_child::{
+        windows_parent::{run_inherited, LocalPipe, ParentLaunch},
+        Event,
+    };
+    use std::{
+        cell::{Cell, RefCell},
+        fs,
+        os::windows::io::{AsHandle, AsRawHandle, OwnedHandle},
+        path::{Path, PathBuf},
+    };
+    use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
+
+    #[derive(Deserialize)]
+    struct Input {
+        parent_pid: u32,
+        control: String,
+        rendezvous: String,
+        relay: String,
+        allow_consent: bool,
+    }
+    fn publish(path: &Path, bytes: &[u8]) {
+        // The private directory is pinned against rename/delete. Publish a
+        // separate empty marker only after the one-shot payload has been closed.
+        fs::write(path, bytes).unwrap();
+        fs::write(path.with_extension("complete"), []).unwrap();
+    }
+    let directory = PathBuf::from(std::env::var_os("APPDATA").unwrap());
+    let input: Input =
+        serde_json::from_slice(&fs::read(directory.join("receiver.fixture.json")).unwrap())
+            .unwrap();
+    let f = fixture();
+    let challenge = "01234567890123456789012345678901";
+    let start = Instant::now();
+    let phase = Cell::new(0u64);
+    let steps = Cell::new(0usize);
+    let dispatched = Cell::new(0usize);
+    let parent = RefCell::new(None::<OwnedHandle>);
+    let rendezvous = RefCell::new(None::<LocalPipe>);
+    let result = run_inherited(
+        &input.control,
+        &input.relay,
+        (
+            |handle: std::os::windows::io::BorrowedHandle<'_>| {
+                // Explicit synthetic expected-parent oracle, not production origin
+                // attestation. The fixture controller supplied this known identity.
+                assert_eq!(
+                    unsafe { GetProcessId(HANDLE(handle.as_raw_handle())) },
+                    input.parent_pid
+                );
+                parent.replace(Some(handle.try_clone_to_owned().unwrap()));
+                Ok(())
+            },
+            || {
+                let retained = parent.borrow();
+                let retained = retained.as_ref().unwrap();
+                let pipe = LocalPipe::connect(&input.rendezvous)?;
+                let mut launch =
+                    ParentLaunch::new(retained.as_handle().try_clone_to_owned().unwrap(), || {
+                        Ok((identity(&f), challenge.to_owned()))
+                    });
+                launch.verify_parent_and_config(&pipe, &pipe)?;
+                rendezvous.replace(Some(pipe));
+                Ok((identity(&f), challenge.to_owned()))
+            },
+        ),
+        &mut SyntheticConsent(input.allow_consent),
+        || {
+            let step = steps.get() + 1;
+            steps.set(step);
+            match step {
+                1 => {
+                    phase.set(1);
+                    publish(&directory.join("challenge.ready"), challenge.as_bytes());
+                    let timeout = Instant::now() + Duration::from_secs(5);
+                    let proof = loop {
+                        if directory.join("grant.complete").exists() {
+                            break fs::read(directory.join("grant.proof")).unwrap();
+                        }
+                        assert!(Instant::now() < timeout, "fixture proof missing");
+                        std::thread::sleep(Duration::from_millis(10));
+                    };
+                    Ok(Event::Grant {
+                        token: f.grant.clone(),
+                        proof,
+                    })
+                }
+                2 => Ok(Event::LocalApproval),
+                3 => {
+                    assert!(input.allow_consent, "denial reached native scheduling");
+                    publish(
+                        &directory.join("approval.ready"),
+                        b"synthetic approval only",
+                    );
+                    Ok(Event::NativeFrame)
+                }
+                4 => {
+                    phase.set(2);
+                    Ok(Event::ParentControl)
+                }
+                5 => {
+                    phase.set(3);
+                    Ok(Event::ParentControl)
+                }
+                _ => panic!("terminal control requested another event"),
+            }
+        },
+        || (1000 + phase.get(), start + Duration::from_secs(phase.get())),
+        |payload| {
+            assert_eq!(payload, [7]);
+            dispatched.set(dispatched.get() + 1);
+            publish(
+                &directory.join("native.accepted"),
+                b"verified synthetic dispatch",
+            );
+            Ok(())
+        },
+    );
+    assert!(result.is_err());
+    assert_eq!(dispatched.get(), usize::from(input.allow_consent));
+    assert_eq!(steps.get(), if input.allow_consent { 5 } else { 2 });
+    let receipt = serde_json::json!({"dispatched":dispatched.get(),"steps":steps.get()});
+    publish(
+        &directory.join("receiver.finished"),
+        &serde_json::to_vec(&receipt).unwrap(),
+    );
+    // The controller must prove Job Object teardown, rather than letting this
+    // synthetic child exit itself and accidentally satisfy the cleanup check.
+    std::thread::sleep(Duration::from_secs(30));
+}
