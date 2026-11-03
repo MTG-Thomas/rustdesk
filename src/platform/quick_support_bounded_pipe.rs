@@ -88,6 +88,14 @@ impl CancellablePipe {
         })
     }
 
+    /// Transfer the same overlapped handle after launch verification. Reads are
+    /// exclusive and synchronously join their OS operation before returning, so
+    /// no operation or OVERLAPPED buffer survives this ownership transfer.
+    pub fn into_file(self) -> Result<File, Denied> {
+        self.bounds().map_err(|_| Denied)?;
+        Ok(self.file)
+    }
+
     fn bounds(&self) -> io::Result<()> {
         if self.stopped || self.cancelled.load(Ordering::Acquire) {
             return Err(io::Error::new(
