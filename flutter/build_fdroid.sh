@@ -166,7 +166,7 @@ prebuild)
 		.github/workflows/flutter-build.yml)"
 
 	RUST_VERSION="$(yq -r \
-		.env.RUST_VERSION \
+		.env.ANDROID_RUST_VERSION \
 		.github/workflows/flutter-build.yml)"
 
 	VCPKG_COMMIT_ID="$(yq -r \

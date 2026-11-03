@@ -3,6 +3,7 @@ package contained
 import (
 	"context"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,19 @@ const parentHandleEnvironment = "BIFROST_QS_PARENT_HANDLE"
 // child must adopt it before spawning descendants and independently verify its
 // signed configuration; the environment value is an identifier, never authority.
 func StartSuspendedWithParent(ctx context.Context, executable string, args []string, directory string) (*Child, error) {
+	return startSuspendedWithProfile(ctx, executable, args, directory, 0)
+}
+
+// StartSuspendedWithProfile additionally inherits a restricted duplicate of the
+// pinned profile object. The caller retains ownership of its source handle.
+func StartSuspendedWithProfile(ctx context.Context, executable string, args []string, directory string, profile windows.Handle) (*Child, error) {
+	if profile == 0 || profile == windows.InvalidHandle {
+		return nil, ErrRejected
+	}
+	return startSuspendedWithProfile(ctx, executable, args, directory, profile)
+}
+
+func startSuspendedWithProfile(ctx context.Context, executable string, args []string, directory string, profile windows.Handle) (*Child, error) {
 	if ctx == nil || ctx.Err() != nil || !localAbsolute(executable) || !localAbsolute(directory) ||
 		!strings.HasSuffix(strings.ToLower(executable), ".exe") {
 		return nil, ErrRejected
@@ -53,13 +67,48 @@ func StartSuspendedWithParent(ctx context.Context, executable string, args []str
 		return nil, ErrRejected
 	}
 	defer windows.CloseHandle(parent)
+	inherited := []windows.Handle{parent}
+	var profileCopy windows.Handle
+	if profile != 0 {
+		var info windows.ByHandleFileInformation
+		if windows.GetFileInformationByHandle(profile, &info) != nil ||
+			info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 ||
+			info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+			return nil, ErrRejected
+		}
+		// Compare with cwd while the source handle keeps its object pinned.
+		view, err := windows.CreateFile(&cwd[0], windows.GENERIC_READ,
+			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil,
+			windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+		if err != nil {
+			return nil, ErrRejected
+		}
+		var cwdInfo windows.ByHandleFileInformation
+		readErr := windows.GetFileInformationByHandle(view, &cwdInfo)
+		closeErr := windows.CloseHandle(view)
+		if readErr != nil || closeErr != nil || info.VolumeSerialNumber != cwdInfo.VolumeSerialNumber ||
+			info.FileIndexHigh != cwdInfo.FileIndexHigh || info.FileIndexLow != cwdInfo.FileIndexLow {
+			return nil, ErrRejected
+		}
+		if windows.DuplicateHandle(windows.CurrentProcess(), profile, windows.CurrentProcess(), &profileCopy,
+			windows.GENERIC_READ|windows.SYNCHRONIZE, true, 0) != nil {
+			return nil, ErrRejected
+		}
+		defer windows.CloseHandle(profileCopy)
+		inherited = append(inherited, profileCopy)
+	}
 	// Do not copy the caller's credential-bearing environment or search PATH.
-	environment := utf16.Encode([]rune(strings.Join([]string{
+	environmentValues := []string{
 		"APPDATA=" + directory, parentHandleEnvironment + "=" + strconv.FormatUint(uint64(parent), 10),
 		"LOCALAPPDATA=" + directory, "PATH=" + system,
 		"SystemRoot=" + root, "TEMP=" + directory, "TMP=" + directory,
 		"USERPROFILE=" + directory, "WINDIR=" + root,
-	}, "\x00") + "\x00\x00"))
+	}
+	if profileCopy != 0 {
+		environmentValues = append(environmentValues, "BIFROST_QS_PROFILE_HANDLE="+strconv.FormatUint(uint64(profileCopy), 10))
+	}
+	slices.Sort(environmentValues)
+	environment := utf16.Encode([]rune(strings.Join(environmentValues, "\x00") + "\x00\x00"))
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, ErrRejected
@@ -75,7 +124,7 @@ func StartSuspendedWithParent(ctx context.Context, executable string, args []str
 	var pins runtime.Pinner
 	pins.Pin(&limits)
 	pins.Pin(&job)
-	pins.Pin(&parent)
+	pins.Pin(&inherited[0])
 	defer pins.Unpin()
 	if result, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
 		uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits))); err != nil || result == 0 {
@@ -89,7 +138,7 @@ func StartSuspendedWithParent(ctx context.Context, executable string, args []str
 	if attributes.Update(jobListAttribute, unsafe.Pointer(&job), unsafe.Sizeof(job)) != nil {
 		return nil, ErrRejected // Never fall back to post-creation job assignment.
 	}
-	if attributes.Update(windows.PROC_THREAD_ATTRIBUTE_HANDLE_LIST, unsafe.Pointer(&parent), unsafe.Sizeof(parent)) != nil {
+	if attributes.Update(windows.PROC_THREAD_ATTRIBUTE_HANDLE_LIST, unsafe.Pointer(&inherited[0]), uintptr(len(inherited))*unsafe.Sizeof(inherited[0])) != nil {
 		return nil, ErrRejected // Do not fall back to unrestricted handle inheritance.
 	}
 	startup := windows.StartupInfoEx{}

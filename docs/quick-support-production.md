@@ -234,6 +234,85 @@ CI job must execute the new native pipe fixture. Production still requires signe
 startup/private-profile configuration, persistent customer Stop UI, signed release qualification and internal device
 acceptance. Synthetic fixture trust is not a production issuer or consent.
 
+## Concrete parent-origin verifier (source only)
+
+The inherited Windows entry now requires an exact launcher image pin: SHA-256,
+byte count and publisher thumbprint supplied by the signed application/release
+configuration. It no longer accepts an arbitrary origin callback. The verifier
+queries the retained foreign process handle, rejects dead/self processes, checks
+an exact local fixed-drive non-reparse file, holds it without write/delete sharing,
+hashes it, and requires Windows Valid Authenticode with the expected publisher
+and timestamp. It rechecks process liveness afterward. No PID lookup, environment
+value, customer link or downloaded payload supplies the trust pin.
+
+The bounded OS verification process uses protected system PowerShell, a constant
+UTF-16 encoded script, cleared environment, fixed system module path and no
+forwarded output. Origin verification and pipe opening run on a blocking worker.
+An origin match does not authorize a session or establish customer consent.
+
+MSVC cross-check/Clippy with warnings denied passes. The Windows tests inspect
+our existing pinned, unmodified signed fixture and reject wrong publishers/hashes;
+they never execute that vendor program. Missing fixture data fails the required
+CI lane. The tests also cover nonlocal-path and dead-parent denial; those Windows
+runtime results are still pending. Actual Windows execution of this new verifier and signed launcher/child acceptance
+still need normal CI/release evidence. The production pins are not provisioned,
+private startup stays refused, and no trust root or credential is created.
+
+The next profile handoff must retain the same private directory object across
+parent failure, before any Config lookup or Server construction. The launcher
+already creates a fresh protected user-owned directory and holds a no-delete-share
+handle with DELETE access. Reopening a child handle that denies delete sharing
+would conflict with that existing access; an explicit inherited duplicate of the
+same directory object is needed instead. Validate owner/protected DACL, directory
+identity/reparse status and the current-directory binding, clear inheritance, and
+hold the pin through process exit. Session/generation/issuer inputs must still
+come from independent authoritative configuration, never the token under check.
+Do not wire the default startup path until these conditions are implemented.
+
+Customer release inventory must also confirm Public Trust signing. The launcher's
+existing signing documentation records a purchased Basic account and an older
+Private Trust rehearsal; that inventory is not current Public Trust evidence.
+Keep private root imports confined to the approved ephemeral rehearsal and never
+install a private root on customer machines to obtain a passing signature check.
+
+The receiver-control launcher now duplicates the creator's pinned profile-directory
+handle with read/synchronize rights, binds its file ID to the child's working
+directory, and includes only that handle and the restricted parent-process handle
+in the explicit inheritance list. The original parent-only API remains available
+without a profile handle. The launcher closes its temporary duplicates before
+normal child/job teardown and directory cleanup.
+
+The composed Windows helper fixture consumes the inherited profile handle,
+checks owner/protected DACL, directory/reparse attributes and working-directory
+file identity, then exercises authenticated IPC and cleanup. A mismatched
+working directory is rejected before launch. Local Windows cross-compilation and
+vet are preparation; native CI execution is required evidence. This does not yet
+install the profile in the Rust child: validated adoption and lifetime retention
+must precede any Config/Server initialization. The environment's numeric handle
+is an identifier, not independent origin/session authority. Startup remains off.
+
+The Rust Windows inherited entry now validates the profile handle after parent
+origin verification and before constructing the server. It consumes the handle
+identifier once, requires inheritance, duplicates read-only rights without
+inheritance, and checks fixed-local-drive placement, the private namespace,
+non-reparse directory identity, current-user ownership and the protected
+single-owner inheritable DACL. Ancestors are pinned from the drive root inward
+without delete sharing; the inherited profile and ancestry pins remain alive
+until process exit. An earlier configuration/profile selection causes refusal,
+not a fallback into the ordinary user's profile.
+
+The feature-specific entry accepts a server factory, so an already-initialized
+Server cannot accidentally precede profile installation through that API. No
+ordinary server constructor or startup path changes. The existing Go/Rust
+Windows interoperability fixture now hands the real launcher-created directory
+handle to the synthetic receiver before its bootstrap/consent/revocation flow.
+Additional isolated-process fixtures cover malformed/non-inheritable handles,
+file objects, mismatched directories, ordinary ACLs and immutable installation.
+Windows cross-checks are not native execution; these additions still require
+actual Windows CI and later complete signed application/device acceptance.
+Authoritative session configuration and default startup routing remain separate;
+profile isolation does not create an issuer, consent or control authority.
+
 ## Persistent receiver Stop surface (source only)
 
 The private receiver keeps the existing explicit local Allow dialog, then creates
@@ -269,3 +348,31 @@ host cleanup joins it outside the async loop. Ordinary client authentication,
 installed Connection Manager IPC, public signatures, dependency locks and CI
 permissions/matrices remain unchanged. Signed startup/profile verification and
 release/dependency/security gates are still outstanding before activation.
+
+## Signed launch identity before server creation
+
+The optional inherited entry now requires a release-pinned launch issuer/public
+key and organization/install scope instead of a caller-provided identity callback.
+After parent-origin and profile validation, it reads only `receiver-launch.jwt`
+from the pinned directory, rejects non-regular/reparse/oversized/invalid UTF-8
+files, verifies a distinct `rd-qs-launch+jwt` signature and profile nonce, then
+constructs the server. The prepared identity is consumed once and separately
+compared with subsequent control tokens. Missing configuration fails closed.
+
+The existing unwired Worker receiver issuer signs at most one launch for a live,
+exactly matched generation and fresh launcher profile nonce, with expiry bounded
+by 60 seconds and the active lease. Its durable marker survives recreation and
+concurrent attempts. No signing identity, route or real credential is created.
+The launcher source entry requires an authoritative configuration callback and
+writes the bounded token with exclusive creation after artifact verification.
+Its callback has no implementation that fabricates session/role/consent authority.
+
+The exact synthetic Worker JWS is a native verifier fixture. Native contract tests
+cover purpose/scope/nonce/signature/expiry/replay denial. The existing Windows
+Go/Rust fixture signs a current synthetic launch using its existing test issuer,
+passes the real pinned directory handle, and exercises the child file verifier
+before its independent bootstrap, grant, consent and revocation assertions.
+Native Windows execution remains CI evidence to collect. Production release pins,
+the authenticated Provider/session-authority adapter and registration, actual
+startup routing, public release signing and full device acceptance remain open.
+Default startup and remote control are still disabled.
