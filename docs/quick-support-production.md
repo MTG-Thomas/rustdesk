@@ -376,3 +376,19 @@ Native Windows execution remains CI evidence to collect. Production release pins
 the authenticated Provider/session-authority adapter and registration, actual
 startup routing, public release signing and full device acceptance remain open.
 Default startup and remote control are still disabled.
+## Control-gated private server construction (source only)
+
+The private host's server factory is now invoked only after the initial `rd-qs-control+jwt`
+envelope is verified on the dedicated parent-control stream first; only then may
+the factory read the pinned profile and settings. An absent, malformed, wrongly
+bound, replayed or expired control envelope still refuses the connection before
+any native conversion or privileged dispatch, and a valid revoke stays terminal.
+The separate control/native streams, exact-sequence checks, terminal revocation
+and receiver-local consent path are unchanged; no wire format, claim, issuer or
+startup route changes.
+
+Focused guard tests add that the signed inner bootstrap alone never initializes
+control, and that an outer control envelope delivered as native peer bytes
+neither authorizes nor replaces the parent-control channel. The full desktop
+feature build was not re-qualified here; ordinary startup still refuses a
+private launch and no production host is enabled.

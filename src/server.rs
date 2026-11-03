@@ -943,10 +943,12 @@ pub async fn stop_main_window_process() {
 /// Source-only private native host. Call only after private profile installation.
 /// Reads must be externally bounded/cancellable with the same cancellation flag;
 /// converting `native` must preserve the retained authenticated pipe handles.
+/// `make_server` runs only after the initial signed control envelope is accepted,
+/// so private profile/state cannot be initialized from an unverified launch.
 /// No command line or network route invokes this function.
 #[cfg(feature = "quick-support-child")]
 pub async fn create_quick_support_connection<P, N>(
-    server: ServerPtr,
+    make_server: impl FnOnce() -> ServerPtr,
     mut parent: P,
     native: N,
     launch: &mut impl quick_support_guard::VerifiedLaunch<P, N>,
@@ -964,6 +966,9 @@ where
         Ok::<_, quick_support_guard::Denied>(parent)
     })
     .await??;
+    // The outer control envelope is verified; only now may the private server
+    // read the pinned profile and settings.
+    let server = make_server();
     let mut stream = convert(native)?;
     let addr = "127.0.0.1:0".parse::<SocketAddr>()?;
     let control = receiver.clone();
@@ -1036,6 +1041,8 @@ fn quick_support_clock() -> Result<(u64, std::time::Instant), quick_support_guar
 /// Windows source entry for the authenticated child host; not a startup route.
 /// Verification must independently establish parent origin, signed launch/profile
 /// configuration and a fresh challenge. Bounds come from that trusted launch.
+/// `paths.0` is the dedicated control pipe; `paths.1` is the native transport, so
+/// peer traffic can never supply control material.
 #[cfg(all(windows, feature = "quick-support-child"))]
 pub async fn run_quick_support_inherited(
     make_server: impl FnOnce() -> ServerPtr,
@@ -1073,7 +1080,7 @@ pub async fn run_quick_support_inherited(
     })
     .await??;
     create_quick_support_connection(
-        make_server(),
+        make_server,
         control,
         native,
         &mut launch,

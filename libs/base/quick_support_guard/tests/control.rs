@@ -61,6 +61,28 @@ fn identity(f: &Fixture) -> ControlIdentity {
 fn session(f: &Fixture) -> ControlSession {
     ControlSession::new(identity(f)).unwrap()
 }
+fn nested_bootstrap(token: &str) -> String {
+    let claims: Value = serde_json::from_slice(
+        &URL_SAFE_NO_PAD
+            .decode(token.split('.').nth(1).unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    claims["bootstrap"].as_str().unwrap().into()
+}
+fn peer_frame(payload: &[u8]) -> Vec<u8> {
+    let width = if payload.len() < 1 << 6 {
+        1usize
+    } else if payload.len() < 1 << 14 {
+        2
+    } else {
+        3
+    };
+    let mut frame =
+        (((payload.len() as u32) << 2) | (width as u32 - 1)).to_le_bytes()[..width].to_vec();
+    frame.extend_from_slice(payload);
+    frame
+}
 fn resign(token: &str, change: impl FnOnce(&mut Value)) -> String {
     let parts: Vec<_> = token.split('.').collect();
     let mut claims: Value =
@@ -239,6 +261,38 @@ fn child_dispatch_requires_control_grant_and_local_consent() {
             |_| -> Result<(), Denied> { panic!("dispatch after control failure") }
         )
         .is_err());
+}
+
+#[test]
+fn nested_bootstrap_alone_never_initializes_control() {
+    let f = fixture();
+    let start = Instant::now();
+    let nested = nested_bootstrap(&f.bootstrap);
+    // The signed inner bootstrap is a different envelope type than the outer control.
+    assert!(session(&f).apply(&nested, 1000, start).is_err());
+    let mut child =
+        ChildConnection::new(identity(&f), "01234567890123456789012345678901".into()).unwrap();
+    assert!(child.parent_control(&nested, 1000, start).is_err());
+    assert!(child.parent_control(&f.bootstrap, 1000, start).is_err());
+    assert!(!child.can_control(start));
+}
+
+#[test]
+fn peer_transport_bytes_never_apply_or_replace_parent_control() {
+    let f = fixture();
+    let start = Instant::now();
+    let mut child =
+        ChildConnection::new(identity(&f), "01234567890123456789012345678901".into()).unwrap();
+    // A valid outer control token delivered as native traffic is still peer data.
+    assert!(child
+        .dispatch_frame(
+            &peer_frame(f.bootstrap.as_bytes()),
+            start,
+            |_| -> Result<(), Denied> { panic!("peer bytes reached dispatch before control") }
+        )
+        .is_err());
+    assert!(!child.can_control(start));
+    assert!(child.parent_control(&f.bootstrap, 1000, start).is_err());
 }
 
 #[test]
