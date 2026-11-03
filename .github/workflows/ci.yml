@@ -195,6 +195,14 @@ jobs:
         command: test
         args: --locked -p hbb_common --features hbb_common/quick-support-profile --test quick_support_profile --target=${{ matrix.job.target }}
 
+    - name: Test shared transport and compression security contracts
+      shell: bash
+      run: |
+        set -euo pipefail
+        for surface in tcp::tests compress::tests bytes_codec::tests stream::tests tls::tests; do
+          cargo test --locked -p hbb_common --features hbb_common/quick-support-profile,hbb_common/webrtc --lib --target=${{ matrix.job.target }} "$surface" -- --test-threads=1
+        done
+
     - name: clean
       shell: bash
       run: |
