@@ -24,6 +24,9 @@ use windows::Win32::{
 
 pub struct LocalPipe(File);
 
+#[path = "quick_support_bounded_pipe.rs"]
+pub mod bounded_pipe;
+
 impl LocalPipe {
     /// Open only the launcher's local namespace. Disable server impersonation
     /// before opening, since the server is not authenticated until verification.
@@ -227,7 +230,7 @@ mod tests {
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
 
-    fn pipe_server() -> (File, String) {
+    pub(super) fn pipe_server() -> (File, String) {
         let name = format!(
             r"\\.\pipe\mtg-quick-support-{:032x}{:032x}",
             std::process::id(),

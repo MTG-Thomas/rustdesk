@@ -738,7 +738,7 @@ fn desktop_child_requires_separate_consent_and_closes_on_stop_or_failure() {
 #[ignore = "invoked by the Go/Rust Windows interoperability fixture"]
 fn receiver_interop_child() {
     use desktop_child::{
-        windows_parent::{run_inherited, LocalPipe, ParentLaunch},
+        windows_parent::{bounded_pipe::run_inherited, LocalPipe, ParentLaunch},
         Event,
     };
     use std::{
@@ -776,8 +776,11 @@ fn receiver_interop_child() {
     let parent = RefCell::new(None::<OwnedHandle>);
     let rendezvous = RefCell::new(None::<LocalPipe>);
     let result = run_inherited(
-        &input.control,
-        &input.relay,
+        (&input.control, &input.relay),
+        (
+            Instant::now() + Duration::from_secs(10),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        ),
         (
             |handle: std::os::windows::io::BorrowedHandle<'_>| {
                 // Explicit synthetic expected-parent oracle, not production origin
