@@ -78,11 +78,17 @@ impl ChildConnection {
         result
     }
 
+    /// Native application gates must check this before privileged dispatch.
+    /// A valid grant alone remains insufficient without receiver-local consent.
+    pub fn can_control(&self, now: Instant) -> bool {
+        self.control.can_control(&self.admission, now)
+    }
+
     pub(crate) fn is_stopped(&self) -> bool {
         self.control.is_stopped()
     }
 
-    pub(crate) fn check_lease(&mut self, now: Instant) -> Result<(), Denied> {
+    pub fn check_lease(&mut self, now: Instant) -> Result<(), Denied> {
         if !self.control.active(now) {
             self.stop();
             return Err(Denied);

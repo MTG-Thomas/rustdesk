@@ -145,22 +145,47 @@ The adapter refuses alternate-service requests, wrong receivers, short legacy
 challenges and signer failures; it clears password, device trust, OS login and
 legacy option fields instead of sending two authorization paths.
 
-Until the private receiver context is connected, the native receiver explicitly
-closes any login containing this field before ordinary RustDesk authorization.
-Private startup remains refused. This patch does not provide a working control
-session or production authentication/consent acceptance.
+Ordinary native connections explicitly close any login containing this field
+before password authorization. A separate source-only native host factory now
+verifies retained parent/configuration and the initial signed control envelope,
+binds its receiver to the internally allocated connection ID, and routes native
+login through grant verification and receiver-local consent. It uses a dedicated
+parent control reader, expiry checks, capability-filtered service output and a
+final authorization check at the queued input sink. Consent holds no guard lock,
+so parent revocation can cancel the modal dialog. Teardown cancels and joins the
+parent reader. Private startup remains refused; no route invokes this factory.
+This is not a working production control session or device acceptance.
 
 Local proof: two synthetic workstation tests; the existing verifier/control/
 profile/startup suite; and the native adapter test compiled against newly
 generated message types. Existing desktop CI additionally runs the adapter test
 with the opt-in feature. Full application build results and Windows runtime
-results must be recorded separately. The next integration is the authenticated
-private-child context, fresh receiver challenge, local consent and terminal
-revocation gate in the actual native connection lifecycle.
+results must be recorded separately. The next integration is the concrete Windows overlapped native-pipe conversion,
+independently authenticated signed startup/profile configuration, fresh receiver
+challenge production, and an always-visible receiver-local Stop surface. The
+native host API must consume exactly the verified pipe handles, use the same
+monotonic cancellation flag and bounded parent reader, and run only after private
+profile installation. No default trust, credentials or production keys are added.
 
 Regression surface: the client gains an optional in-memory field and opt-in
 login hook; ordinary clients keep the existing message construction. The
-protobuf adds an unused optional field. The server's only new default-path
-behavior is refusing that field, preventing unsupported authorization fallback.
-No shared function signatures, permissions, signing material or startup policy
-change.
+protobuf adds an unused optional field. The server's only feature-off
+behavior change is refusing that field, preventing unsupported authorization
+fallback. Feature-on hooks attach only a registered private connection: ordinary
+connections retain the old authentication and input paths. The private factory
+uses explicit two-bit capability denial (all slots except keyboard/input), a
+4 MiB authorized frame bound and no installed Connection Manager IPC. Safe video
+decoder/quality/cursor options remain available; privacy, input blocking, file,
+clipboard, audio and terminal capabilities are refused. No shared function
+signatures, infrastructure permissions, signing material or startup policy change.
+
+Additional local receiver proof uses the existing signed synthetic issuer fixture
+and a deterministic workstation proof from its existing test identity. It covers
+exact connection-ID binding, proof removal before native retention, required
+consent, revocation during the prompt, replay, expiry, malformed/oversized/truncated
+control, EOF, queued-input denial after revoke, desktop capability bits and safe
+video options. The four native login/receiver tests compile against the generated
+protocol and pass. This isolated source test does not execute the whole desktop,
+real OS input, Windows visual consent or real device sessions. Full desktop
+build/runtime CI remains required. A heavy local desktop build was deferred
+because other owners' Docker test stacks were active on the shared host.

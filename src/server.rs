@@ -939,3 +939,88 @@ pub async fn stop_main_window_process() {
         }
     }
 }
+
+/// Source-only private native host. Call only after private profile installation.
+/// Reads must be externally bounded/cancellable with the same cancellation flag;
+/// converting `native` must preserve the retained authenticated pipe handles.
+/// No command line or network route invokes this function.
+#[cfg(feature = "quick-support-child")]
+pub async fn create_quick_support_connection<P, N>(
+    server: ServerPtr,
+    mut parent: P,
+    native: N,
+    launch: &mut impl quick_support_guard::VerifiedLaunch<P, N>,
+    convert: impl FnOnce(N) -> ResultType<Stream>,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+) -> ResultType<()>
+where
+    P: std::io::Read + Send + 'static,
+{
+    use crate::quick_support_receiver::{Receiver, Registration};
+    let receiver = Arc::new(Receiver::verified(&parent, &native, launch, cancelled)?);
+    let initial = receiver.clone();
+    let mut parent = tokio::task::spawn_blocking(move || {
+        initial.read_control(&mut parent, quick_support_clock)?;
+        Ok::<_, quick_support_guard::Denied>(parent)
+    })
+    .await??;
+    let mut stream = convert(native)?;
+    let addr = "127.0.0.1:0".parse::<SocketAddr>()?;
+    let control = receiver.clone();
+    let reader = tokio::task::spawn_blocking(move || {
+        while control
+            .read_control(&mut parent, quick_support_clock)
+            .is_ok()
+        {}
+        control.stop();
+    });
+    let result = async {
+        let id = server
+            .write()
+            .map_err(|_| hbb_common::anyhow::anyhow!("server lock poisoned"))?
+            .get_new_id();
+        let _registration = Registration::new(id, receiver.clone())?;
+        let unauthorized = admit_unauthorized(id, addr.ip())
+            .ok_or_else(|| hbb_common::anyhow::anyhow!("private admission unavailable"))?;
+        stream.set_max_packet_length(MAX_UNAUTHORIZED_MESSAGE);
+        // Parent EOF, revocation and lease expiry also bound identity exchange.
+        tokio::select! {
+            result = identity_handshake(&mut stream, true) => result?,
+            _ = async {
+                while receiver.active(std::time::Instant::now()) {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            } => bail!("private control ended during identity exchange"),
+        }
+        Connection::start(
+            addr,
+            stream,
+            id,
+            Arc::downgrade(&server),
+            ConnectionMeta {
+                control_permissions: Some(ControlPermissions {
+                    permissions: crate::quick_support_receiver::DESKTOP_PERMISSIONS,
+                    ..Default::default()
+                }),
+                controlled_context: None,
+            },
+            unauthorized,
+        )
+        .await;
+        Ok::<_, hbb_common::anyhow::Error>(())
+    }
+    .await;
+    receiver.stop();
+    // The authenticated host's cancellable pipe must complete before teardown.
+    reader.await?;
+    result
+}
+
+#[cfg(feature = "quick-support-child")]
+fn quick_support_clock() -> Result<(u64, std::time::Instant), quick_support_guard::Denied> {
+    let wall = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| quick_support_guard::Denied)?
+        .as_secs();
+    Ok((wall, std::time::Instant::now()))
+}

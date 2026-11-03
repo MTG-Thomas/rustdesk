@@ -48,6 +48,8 @@ mod quick_support_startup;
 pub mod quick_support_child;
 #[cfg(feature = "quick-support-child")]
 mod quick_support_login;
+#[cfg(feature = "quick-support-child")]
+mod quick_support_receiver;
 mod custom_server;
 mod lang;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
