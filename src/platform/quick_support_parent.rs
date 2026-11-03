@@ -4,15 +4,21 @@ use std::{
     io::{self, Read},
     os::windows::{
         fs::OpenOptionsExt,
-        io::{AsHandle, AsRawHandle, BorrowedHandle, OwnedHandle},
+        io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle},
     },
 };
 use windows::Win32::{
-    Foundation::{HANDLE, WAIT_TIMEOUT},
+    Foundation::{
+        DuplicateHandle, GetHandleInformation, SetHandleInformation, DUPLICATE_HANDLE_OPTIONS,
+        HANDLE, HANDLE_FLAGS, HANDLE_FLAG_INHERIT, WAIT_TIMEOUT,
+    },
     Storage::FileSystem::{SECURITY_ANONYMOUS, SECURITY_SQOS_PRESENT},
     System::{
         Pipes::{GetNamedPipeInfo, GetNamedPipeServerProcessId, NAMED_PIPE_MODE, PIPE_SERVER_END},
-        Threading::{GetProcessId, WaitForSingleObject},
+        Threading::{
+            GetCurrentProcess, GetCurrentProcessId, GetProcessId, WaitForSingleObject,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+        },
     },
 };
 
@@ -62,6 +68,94 @@ impl<C> ParentLaunch<C> {
             configuration,
         }
     }
+
+    /// Consume only a candidate handle identifier. Actual peer/configuration
+    /// authentication still happens inside the adapter before payload reads.
+    /// `authenticate` must establish the expected trusted launch origin using
+    /// independent authority; repeating PID/name/environment checks is not proof.
+    pub fn from_environment(
+        mut authenticate: impl FnMut(BorrowedHandle<'_>) -> Result<(), Denied>,
+        configuration: C,
+    ) -> Result<Self, Denied> {
+        let parent = capture_parent()?;
+        authenticate(parent.as_handle())?;
+        Ok(Self::new(parent, configuration))
+    }
+}
+
+fn capture_parent() -> Result<OwnedHandle, Denied> {
+    const VARIABLE: &str = "BIFROST_QS_PARENT_HANDLE";
+    let value = std::env::var(VARIABLE);
+    std::env::remove_var(VARIABLE);
+    let value = value.map_err(|_| Denied)?;
+    let number = value.parse::<usize>().map_err(|_| Denied)?;
+    if number == 0 || number == usize::MAX || number.to_string() != value {
+        return Err(Denied);
+    }
+    let source = HANDLE(number as *mut std::ffi::c_void);
+    let mut flags = 0;
+    unsafe { GetHandleInformation(source, &mut flags) }.map_err(|_| Denied)?;
+    if flags & HANDLE_FLAG_INHERIT.0 == 0 {
+        return Err(Denied);
+    }
+    let expected = unsafe { GetProcessId(source) };
+    if expected == 0
+        || expected == unsafe { GetCurrentProcessId() }
+        || unsafe { WaitForSingleObject(source, 0) } != WAIT_TIMEOUT
+    {
+        return Err(Denied);
+    }
+    let mut copy = HANDLE::default();
+    unsafe {
+        DuplicateHandle(
+            GetCurrentProcess(),
+            source,
+            GetCurrentProcess(),
+            &mut copy,
+            (PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE).0,
+            false,
+            DUPLICATE_HANDLE_OPTIONS(0),
+        )
+    }
+    .map_err(|_| Denied)?;
+    // DuplicateHandle returned a fresh, uniquely owned handle. Never adopt or
+    // close the untrusted numeric source: it could alias another Rust owner.
+    let owned = unsafe { OwnedHandle::from_raw_handle(copy.0) };
+    let id = unsafe { GetProcessId(copy) };
+    if id != expected
+        || unsafe { WaitForSingleObject(copy, 0) } != WAIT_TIMEOUT
+        || unsafe { GetProcessId(source) } != id
+    {
+        return Err(Denied);
+    }
+    unsafe { SetHandleInformation(source, HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0)) }
+        .map_err(|_| Denied)?;
+    Ok(owned)
+}
+
+/// OS entry API for one receiver connection; not registered by default startup.
+/// The caller supplies independent parent-origin and signed-configuration
+/// verifiers, isolated consent and a bounded/cancellable scheduler/dispatcher.
+pub fn run_inherited(
+    control_path: &str,
+    native_path: &str,
+    verification: (
+        impl FnMut(BorrowedHandle<'_>) -> Result<(), Denied>,
+        impl FnMut() -> Result<(ControlIdentity, String), Denied>,
+    ),
+    consent: &mut impl quick_support_guard::LocalConsent,
+    next: impl FnMut() -> Result<super::Event, Denied>,
+    clock: impl FnMut() -> (u64, std::time::Instant),
+    dispatch: impl FnMut(&[u8]) -> Result<(), Denied>,
+) -> Result<(), Denied> {
+    let (authenticate, configuration) = verification;
+    let mut launch = ParentLaunch::from_environment(authenticate, configuration)?;
+    if control_path == native_path {
+        return Err(Denied);
+    }
+    let control = LocalPipe::connect(control_path)?;
+    let native = LocalPipe::connect(native_path)?;
+    super::run(control, native, &mut launch, consent, next, clock, dispatch)
 }
 
 impl<C: FnMut() -> Result<(ControlIdentity, String), Denied>> VerifiedLaunch<LocalPipe, LocalPipe>
@@ -133,7 +227,7 @@ mod tests {
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
 
-    fn pipe_pair() -> (File, LocalPipe) {
+    fn pipe_server() -> (File, String) {
         let name = format!(
             r"\\.\pipe\mtg-quick-support-{:032x}{:032x}",
             std::process::id(),
@@ -154,6 +248,11 @@ mod tests {
         };
         assert!(!raw.is_invalid());
         let server = unsafe { File::from_raw_handle(raw.0) };
+        (server, name)
+    }
+
+    fn pipe_pair() -> (File, LocalPipe) {
+        let (server, name) = pipe_server();
         let client = LocalPipe::connect(&name).unwrap();
         (server, client)
     }
@@ -254,5 +353,123 @@ mod tests {
         }
         let upper = format!(r"\\.\pipe\mtg-quick-support-{}", "A".repeat(64));
         assert!(LocalPipe::connect(&upper).is_err());
+    }
+
+    #[test]
+    fn inherited_identifier_is_one_use_and_never_authenticates_a_wrong_peer() {
+        const VARIABLE: &str = "BIFROST_QS_PARENT_HANDLE";
+        struct Restore(Option<std::ffi::OsString>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var(VARIABLE, value),
+                    None => std::env::remove_var(VARIABLE),
+                }
+            }
+        }
+        let _restore = Restore(std::env::var_os(VARIABLE));
+        std::env::remove_var(VARIABLE);
+        assert!(capture_parent().is_err());
+        for value in [
+            "0",
+            "01",
+            "+1",
+            "-1",
+            "not-a-handle",
+            "18446744073709551615",
+        ] {
+            std::env::set_var(VARIABLE, value);
+            assert!(capture_parent().is_err());
+            assert!(std::env::var_os(VARIABLE).is_none());
+        }
+        let mut other = WaitingProcess::new();
+        for (pid, rights) in [
+            (
+                std::process::id(),
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+            ),
+            (other.0.id(), PROCESS_SYNCHRONIZE),
+        ] {
+            let raw = unsafe { OpenProcess(rights, true, pid) }.unwrap();
+            let handle = unsafe { OwnedHandle::from_raw_handle(raw.0) };
+            std::env::set_var(VARIABLE, (handle.as_raw_handle() as usize).to_string());
+            assert!(capture_parent().is_err());
+        }
+        let raw = unsafe {
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                true,
+                other.0.id(),
+            )
+        }
+        .unwrap();
+        let source = unsafe { OwnedHandle::from_raw_handle(raw.0) };
+        let value = (source.as_raw_handle() as usize).to_string();
+        std::env::set_var(VARIABLE, &value);
+        let copy = capture_parent().unwrap();
+        assert_eq!(
+            unsafe { GetProcessId(HANDLE(copy.as_raw_handle())) },
+            other.0.id()
+        );
+        let mut flags = 0;
+        unsafe { GetHandleInformation(HANDLE(copy.as_raw_handle()), &mut flags) }.unwrap();
+        assert_eq!(flags & HANDLE_FLAG_INHERIT.0, 0);
+        unsafe { GetHandleInformation(raw, &mut flags) }.unwrap();
+        assert_eq!(flags & HANDLE_FLAG_INHERIT.0, 0);
+        assert!(capture_parent().is_err());
+
+        // Re-introducing the number cannot reuse the now non-inheritable slot.
+        std::env::set_var(VARIABLE, &value);
+        assert!(capture_parent().is_err());
+        struct Consent;
+        impl quick_support_guard::LocalConsent for Consent {
+            fn receiver_approved(&mut self) -> Result<(), Denied> {
+                panic!("unverified launch reached consent")
+            }
+        }
+        for allow_origin in [false, true] {
+            unsafe { SetHandleInformation(raw, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT) }
+                .unwrap();
+            std::env::set_var(VARIABLE, &value);
+            let (_a, control) = pipe_server();
+            let (_b, native) = pipe_server();
+            let called = std::cell::Cell::new(false);
+            let origin = std::cell::Cell::new(false);
+            assert!(run_inherited(
+                &control,
+                &native,
+                (
+                    |parent: BorrowedHandle<'_>| {
+                        origin.set(true);
+                        assert_eq!(
+                            unsafe { GetProcessId(HANDLE(parent.as_raw_handle())) },
+                            other.0.id()
+                        );
+                        if allow_origin {
+                            Ok(())
+                        } else {
+                            Err(Denied)
+                        }
+                    },
+                    || {
+                        called.set(true);
+                        Err(Denied)
+                    }
+                ),
+                &mut Consent,
+                || panic!("unverified launch reached event loop"),
+                || (1000, std::time::Instant::now()),
+                |_| panic!("unverified launch reached native dispatch")
+            )
+            .is_err());
+            assert!(origin.get());
+            assert!(!called.get());
+            assert!(std::env::var_os(VARIABLE).is_none());
+        }
+        other.0.kill().unwrap();
+        other.0.wait().unwrap();
+        unsafe { SetHandleInformation(raw, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT) }.unwrap();
+        std::env::set_var(VARIABLE, &value);
+        assert!(capture_parent().is_err());
     }
 }
