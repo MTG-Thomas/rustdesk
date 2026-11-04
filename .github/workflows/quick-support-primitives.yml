@@ -43,6 +43,27 @@ jobs:
         run: |
           cargo +1.90.0 install cargo-audit --version 0.22.2 --locked
           cargo +1.90.0 audit --deny warnings --file Cargo.lock
+  workstation-store:
+    name: Windows protected workstation identity store
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+      - name: Install pinned Rust toolchain
+        shell: pwsh
+        run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Execute protected workstation identity store fixture
+        shell: pwsh
+        run: |
+          $output = cargo +1.90.0 test --locked --lib --features quick-support-child workstation_store -- --test-threads=1 2>&1
+          $output | Write-Output
+          if ($LASTEXITCODE -ne 0) { throw 'Protected workstation identity store fixture failed.' }
+          if (-not ($output -match 'test result: ok\. [1-9][0-9]* passed;')) {
+            throw 'No protected workstation identity store fixture executed.'
+          }
   artifact:
     name: Artifact verification / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
