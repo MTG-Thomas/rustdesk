@@ -13,6 +13,21 @@ pub mod windows_parent;
 #[path = "platform/quick_support_consent.rs"]
 pub mod windows_consent;
 
+#[cfg(windows)]
+impl crate::quick_support_key_store::ProtectedKeyStore
+    for windows_parent::profile::workstation_store::WorkstationStore
+{
+    fn load(&mut self) -> std::io::Result<Option<quick_support_guard::WorkstationKey>> {
+        self.load()
+    }
+    fn create_new(
+        &mut self,
+        seed: &[u8; 32],
+    ) -> std::io::Result<quick_support_guard::WorkstationKey> {
+        self.create_seed(seed)
+    }
+}
+
 pub enum Event {
     ParentControl,
     Grant { token: String, proof: Vec<u8> },

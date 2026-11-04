@@ -48,9 +48,10 @@ fn attempt() -> (EnrollmentAttempt, Value, WorkstationKey) {
 #[test]
 fn provider_request_retains_id_and_public_key_without_auth_or_private_material() {
     let (attempt, result, key) = attempt();
-    let request = attempt.request(WORKFLOW, ORG).unwrap();
+    let request = attempt.request(WORKFLOW).unwrap();
     assert_eq!(request["workflow_id"], WORKFLOW);
-    assert_eq!(request["org_id"], ORG);
+    assert!(request.get("org_id").is_none());
+    assert!(request.get("run_as").is_none());
     assert_eq!(request["sync"], true);
     assert_eq!(request["input_data"]["request_id"], REQUEST);
     let public = request["input_data"]["workstation_key"].as_str().unwrap();
@@ -103,7 +104,7 @@ fn malformed_or_unqualified_results_are_not_enrollment_receipts() {
             .is_err());
     }
     let (attempt, _, _) = attempt();
-    assert!(attempt.request("untrusted-workflow-name", ORG).is_err());
+    assert!(attempt.request("untrusted-workflow-name").is_err());
 }
 
 #[path = "../../../../src/quick_support_key_store.rs"]
@@ -122,13 +123,14 @@ impl key_store::ProtectedKeyStore for Store {
         }
         Ok(self.present.then(|| attempt().2))
     }
-    fn create_new(&mut self, _: &WorkstationKey) -> std::io::Result<()> {
+    fn create_new(&mut self, seed: &[u8; 32]) -> std::io::Result<WorkstationKey> {
         self.writes += 1;
         if self.present || self.fail_create {
             return Err(std::io::ErrorKind::AlreadyExists.into());
         }
+        assert_eq!(seed, &[9; 32]);
         self.present = true;
-        Ok(())
+        Ok(attempt().2)
     }
 }
 
@@ -165,13 +167,50 @@ fn explicit_initialization_requires_persistence_before_enrollment_material_is_re
         fail_create: true,
         writes: 0,
     };
-    assert!(key_store::initialize_explicitly(&mut store, || Ok(attempt().2)).is_err());
+    assert!(key_store::initialize_explicitly(&mut store, || Ok([9; 32])).is_err());
     assert_eq!(store.writes, 1);
     store.fail_create = false;
-    let key = key_store::initialize_explicitly(&mut store, || Ok(attempt().2)).unwrap();
+    let key = key_store::initialize_explicitly(&mut store, || Ok([9; 32])).unwrap();
     assert_eq!(
         key_store::load_existing(&mut store).unwrap().public_key(),
         key.public_key()
     );
     assert_eq!(store.writes, 2);
+}
+
+#[test]
+fn source_http_envelope_requires_success_workflow_and_live_attempt_context() {
+    for variant in 0..8 {
+        let (attempt, result, _) = attempt();
+        let mut response = json!({"execution_id": ORG, "workflow_id": WORKFLOW,
+            "status": "Success", "result": result, "error": null, "error_type": null});
+        match variant {
+            1 => response["status"] = "Running".into(),
+            2 => response["status"] = "CompletedWithErrors".into(),
+            3 => response["workflow_id"] = ORG.into(),
+            4 => response["execution_id"] = "invalid".into(),
+            5 => response["error"] = "untrusted failure".into(),
+            _ => {}
+        }
+        let status = if variant == 6 { 302 } else { 200 };
+        let context = if variant == 7 {
+            "stale-session"
+        } else {
+            "synthetic-auth-session"
+        };
+        let result = attempt.complete_http(
+            WORKFLOW,
+            REQUEST,
+            context,
+            status,
+            &serde_json::to_vec(&response).unwrap(),
+        );
+        assert_eq!(result.is_ok(), variant == 0);
+    }
+    for body in [vec![b'x'; 8193], b"not json".to_vec()] {
+        let (attempt, _, _) = attempt();
+        assert!(attempt
+            .complete_http(WORKFLOW, REQUEST, "synthetic-auth-session", 200, &body)
+            .is_err());
+    }
 }

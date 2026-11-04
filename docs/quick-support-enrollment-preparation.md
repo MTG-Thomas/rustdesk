@@ -5,34 +5,51 @@ It enables no startup route, HTTP request, key creation, credential use or contr
 
 `EnrollmentAttempt` builds the documented synchronous Provider workflow request
 for `POST /api/workflows/execute`. The installation supplies the pinned workflow
-and organization UUIDs. The captured request UUID and authenticated-session
-context remain local; only the public key and request UUID enter workflow inputs.
+UUID. The authenticated session selects the organization; the request sends no
+admin-only `org_id` override or impersonation. The captured request UUID and
+session/org context remain local; only the public key and request UUID enter
+workflow inputs.
 A completion consumes the attempt and requires the same request/session context,
 technician and SHA-256 fingerprint of the public-key text. Running/error execution
-envelopes cannot masquerade as the inner enrollment result. The HTTP executor
-must authenticate and qualify the terminal execution before passing that result;
-this adapter does not authenticate a response by itself.
+envelopes cannot masquerade as the inner enrollment result. `ProviderEnrollmentHttp` uses only a configured HTTPS origin, refuses userinfo,
+paths/query/fragments, disables redirects/proxies, marks its bearer header
+sensitive, and bounds the entire request to 25 seconds and response to 8192 bytes.
+It rechecks the supplied live session/org context before sending and after reading
+the response. No existing Provider session is yet connected to this source helper.
+The envelope parser requires `Success`, an exact workflow UUID, a valid execution
+UUID, no error fields and a matching inner result. Platform source inspected at
+`f5b2b2c009bc6b2b9ab81c0511c813b7e8049a60` supplies that schema; this is not
+confirmation of the deployed upstream-compatible instance.
 
 `ProtectedKeyStore` specifies the OS boundary rather than pretending a path is
 protected. Ordinary load refuses absence and propagates corruption/access errors.
 Explicit initialization preserves an existing identity, invokes an injected
 initializer only after genuine absence, and returns new material only after an
-atomic create-new succeeds. Failure never triggers automatic replacement, retry,
-enrollment or rotation. No production filesystem implementation or CSPRNG call
-is connected. Tests load fixed synthetic seeds only.
+atomic create-new succeeds. The transient seed is wiped on successful or failed
+persistence. Failure never triggers automatic replacement, retry, enrollment or
+rotation. No CSPRNG call is connected. Tests use fixed synthetic seeds only.
+
+The Windows `WorkstationStore` source implements that boundary using an already
+protected owner-only inheritable directory. It retains non-reparse ancestor and
+directory handles without delete sharing, validates key ownership/ACL/hard-link
+count, and retains the key handle without write/delete sharing. Create-new opens
+and verifies the private file before writing bytes and calling sync_all; uncertain
+writes remain for reconciliation. Loading never follows a replaced path or
+regenerates corrupt data. The native fixture covers missing/broad storage,
+round-trip/reopen, overwrite/write/rename refusal and truncation. MSVC source
+checking is not execution of that native fixture.
 
 Remaining engineering prerequisites:
 
-- Qualify the actual upstream-compatible synchronous HTTP execution envelope,
-  completion/failure states and authenticated response correlation. Bind pending
+- Verify deployed compatibility with the source-qualified synchronous HTTP
+  execution envelope and authenticated response correlation. Bind pending
   attempts to the existing authenticated Provider session and cancel them when it
   changes. Do not forward Provider HMAC credentials to native clients, follow
   redirects with authorization or retry uncertain POSTs under a new request ID.
-- Implement and qualify the Windows owner-only key host using retained handles,
-  non-reparse paths and protected owner ACLs throughout read/create operations.
-  Access denial or malformed stored bytes must remain errors, not absence. Avoid
-  a path-check/open race or broad inherited ACLs. An uncertain create requires
-  reconciliation with the existing identity, never overwriting it.
+- Execute the Windows native fixture and qualify the existing protected-directory
+  setup UI. Access denial or malformed stored bytes must remain errors, not
+  absence. An uncertain create requires reconciliation with the existing identity,
+  never overwriting it.
 - Wire explicit setup/UI and authenticated enrollment only after those boundaries
   are implemented and reviewed. Key rotation must invalidate previous bindings;
   end affected sessions and re-invite. Do not invent an independent receiver

@@ -1,4 +1,8 @@
 #[cfg(windows)]
+#[path = "../../../../src/quick_support_key_store.rs"]
+mod quick_support_key_store;
+
+#[cfg(windows)]
 #[path = "../../../hbb_common/src/private_profile.rs"]
 pub mod private_profile;
 #[cfg(windows)]

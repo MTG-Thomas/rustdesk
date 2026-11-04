@@ -1,4 +1,6 @@
 //! Process-lifetime profile pin, adopted only after independent parent verification.
+#[path = "quick_support_workstation_store.rs"]
+pub mod workstation_store;
 use quick_support_guard::Denied;
 use std::{
     fs::{File, OpenOptions},
@@ -353,6 +355,53 @@ mod tests {
         let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
         unsafe { CreateDirectoryW(PCWSTR(path.as_ptr()), Some(&attributes)) }.unwrap();
     }
+    #[test]
+    fn workstation_store_pins_private_identity_and_refuses_replacement_or_corruption() {
+        use super::workstation_store::WorkstationStore;
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base =
+            std::env::temp_dir().join(format!("qs-workstation-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&base).unwrap();
+        assert!(WorkstationStore::open(&base).is_err());
+        let root = base.join("private");
+        secure_directory(&root);
+        let mut store = WorkstationStore::open(&root).unwrap();
+        assert!(store.load().unwrap().is_none());
+        let public =
+            crate::quick_support_key_store::initialize_explicitly(&mut store, || Ok([9; 32]))
+                .unwrap()
+                .public_key();
+        assert_eq!(
+            crate::quick_support_key_store::load_existing(&mut store)
+                .unwrap()
+                .public_key(),
+            public
+        );
+        assert!(store.create_seed(&[7; 32]).is_err());
+        assert!(OpenOptions::new()
+            .write(true)
+            .open(root.join("workstation.key"))
+            .is_err());
+        assert!(std::fs::rename(&root, base.join("replaced")).is_err());
+        drop(store);
+        let mut reopened = WorkstationStore::open(&root).unwrap();
+        assert_eq!(reopened.load().unwrap().unwrap().public_key(), public);
+        drop(reopened);
+        std::fs::write(root.join("workstation.key"), [9]).unwrap();
+        let mut corrupt = WorkstationStore::open(&root).unwrap();
+        assert_eq!(
+            corrupt.load().err().unwrap().kind(),
+            std::io::ErrorKind::InvalidData
+        );
+        assert!(corrupt.create_seed(&[9; 32]).is_err());
+        drop(corrupt);
+        assert_eq!(std::fs::read(root.join("workstation.key")).unwrap(), [9]);
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
     fn advertise(handle: &OwnedHandle) {
         unsafe {
             SetHandleInformation(
