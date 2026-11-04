@@ -46,8 +46,13 @@ and verifies the private file with the explicit qualified owner/ACL before writi
 bytes and calling sync_all; uncertain
 writes remain for reconciliation. Loading never follows a replaced path or
 regenerates corrupt data. The native fixture covers missing/broad storage,
-round-trip/reopen, overwrite/write/rename refusal and truncation. MSVC source
-checking is not execution of that native fixture.
+round-trip/reopen, overwrite/write/rename refusal and truncation. It executes on
+`windows-2022` through the guard `control` harness at tested head `54b726790`
+(merge `94827140251bc82bf9fb0f8905f6b42d72323f0c`, run 41891294791 / job
+126789085776): the fixture reports one pass, and the CI step fails when the
+filter matches no test. This is isolated native fixture evidence, not full
+application execution, launcher or startup qualification, or two-device pilot
+acceptance.
 
 Remaining engineering prerequisites:
 
@@ -56,18 +61,20 @@ Remaining engineering prerequisites:
   attempts to the existing authenticated Provider session and cancel them when it
   changes. Do not forward Provider HMAC credentials to native clients, follow
   redirects with authorization or retry uncertain POSTs under a new request ID.
-- Execute the Windows native fixture and qualify the existing protected-directory
-  setup UI. Access denial or malformed stored bytes must remain errors, not
-  absence. An uncertain create requires reconciliation with the existing identity,
-  never overwriting it.
+- Qualify the remaining Windows application host and the existing
+  protected-directory setup UI. The isolated store fixture now executes, but
+  access denial or malformed stored bytes must remain errors, not absence. An
+  uncertain create requires reconciliation with the existing identity, never
+  overwriting it.
 - Wire explicit setup/UI and authenticated enrollment only after those boundaries
   are implemented and reviewed. Key rotation must invalidate previous bindings;
   end affected sessions and re-invite. Do not invent an independent receiver
   generation or clear the authority's `receiver-generation` records.
 
-All fixtures are offline and establish source behavior only. Native Windows
-filesystem, HTTP integration, launcher startup, customer consent, device and
-end-to-end acceptance remain separate. PR50's tested merge candidate
+All fixtures are offline and establish source behavior only. The isolated
+Windows store fixture now executes natively; full application filesystem and
+startup integration, HTTP integration, launcher startup, customer consent,
+device and end-to-end acceptance remain separate. PR50's tested merge candidate
 `1e7aa9b9addd1ba2b496a0ffeff705a55bd54af8` is distinct from its landed merge above.
 The retained cached audit still fails with 13 vulnerability entries and 29
 warnings; this work changes no dependency or release gate.
