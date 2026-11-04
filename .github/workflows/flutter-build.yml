@@ -527,9 +527,14 @@ jobs:
           # original compiler and host architecture for Sciter's ABI/build scripts.
           rustup toolchain install 1.90.0-${{ matrix.job.target }} \
             --profile minimal --no-self-update --force-non-host
+          rustup run 1.90.0-${{ matrix.job.target }} rustc --edition=2021 \
+            tools/sciter-cargo-rustc.rs -o "$RUNNER_TEMP/sciter-cargo-rustc.exe"
+          rustup run 1.90.0-${{ matrix.job.target }} rustc --edition=2021 --test \
+            tools/sciter-cargo-rustc.rs -o "$RUNNER_TEMP/sciter-cargo-rustc-tests.exe"
+          "$RUNNER_TEMP/sciter-cargo-rustc-tests.exe"
           echo "RUSTC=$(rustup which --toolchain nightly-2023-10-13-${{ matrix.job.target }} rustc)" >> "$GITHUB_ENV"
           echo "RUSTDOC=$(rustup which --toolchain nightly-2023-10-13-${{ matrix.job.target }} rustdoc)" >> "$GITHUB_ENV"
-          echo "RUSTC_WRAPPER=${{ github.workspace }}/tools/sciter-cargo-rustc.cmd" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=$RUNNER_TEMP/sciter-cargo-rustc.exe" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
