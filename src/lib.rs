@@ -49,6 +49,8 @@ pub mod quick_support_child;
 #[cfg(feature = "quick-support-child")]
 mod quick_support_login;
 #[cfg(feature = "quick-support-child")]
+mod quick_support_workstation;
+#[cfg(feature = "quick-support-child")]
 mod quick_support_receiver;
 #[cfg(all(windows, feature = "quick-support-child"))]
 #[path = "platform/quick_support_async_pipe.rs"]
