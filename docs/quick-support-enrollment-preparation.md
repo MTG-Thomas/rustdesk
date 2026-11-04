@@ -29,6 +29,15 @@ atomic create-new succeeds. The transient seed is wiped on successful or failed
 persistence. Failure never triggers automatic replacement, retry, enrollment or
 rotation. No CSPRNG call is connected. Tests use fixed synthetic seeds only.
 
+`ProviderEnrollmentHttp::enroll_existing` is the source setup coordinator: it
+loads the existing protected identity, captures the retained request and current
+technician/session context, awaits the bounded HTTP helper while retaining the
+store borrow, then constructs the existing native signer only after the receipt
+matches. Missing/denied storage cannot invoke initialization or HTTP. Explicit
+initialization remains a separate operation. The UI host must retain the request
+ID before submission and reconcile uncertainty; the coordinator does not invent
+or replace IDs on error.
+
 The Windows `WorkstationStore` source implements that boundary using an already
 protected owner-only inheritable directory. It retains non-reparse ancestor and
 directory handles without delete sharing, validates key ownership/ACL/hard-link
@@ -62,3 +71,12 @@ end-to-end acceptance remain separate. PR50's tested merge candidate
 `1e7aa9b9addd1ba2b496a0ffeff705a55bd54af8` is distinct from its landed merge above.
 The retained cached audit still fails with 13 vulnerability entries and 29
 warnings; this work changes no dependency or release gate.
+
+The remaining authenticated-host boundary is concrete: the desktop needs a
+trusted handoff of the Provider origin/workflow configuration, authenticated
+technician identity, existing Provider bearer and a live session/org-context
+reader. There is no such registered native handoff in the inspected source.
+RustDesk account tokens and Provider HMAC secrets are not substitutes. Do not
+connect this API to private startup with synthetic callbacks or infer eligibility
+from a populated session struct. UI integration must also clear earlier pending
+signers on logout/context change and preserve receiver-local consent separately.

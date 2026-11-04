@@ -1,5 +1,7 @@
 use crate::{
-    quick_support_enrollment::EnrollmentAttempt, quick_support_workstation::EnrollmentReceipt,
+    quick_support_enrollment::EnrollmentAttempt,
+    quick_support_key_store::{load_existing, ProtectedKeyStore},
+    quick_support_workstation::{EnrolledWorkstation, EnrollmentReceipt},
 };
 use quick_support_guard::Denied;
 use reqwest::{
@@ -16,6 +18,14 @@ pub(crate) struct ProviderEnrollmentHttp {
     endpoint: Url,
     workflow_id: String,
 }
+/// Borrowed existing Provider session, supplied by the authenticated host. This
+/// carries no local eligibility assertion and is never serialized or logged.
+pub(crate) struct ProviderSession<'a> {
+    pub technician_id: &'a str,
+    pub context: &'a str,
+    pub bearer: &'a str,
+}
+
 impl ProviderEnrollmentHttp {
     pub fn new(origin: &str, workflow_id: &str) -> Result<Self, Denied> {
         let origin = Url::parse(origin).map_err(|_| Denied)?;
@@ -43,6 +53,25 @@ impl ProviderEnrollmentHttp {
             endpoint: origin.join("/api/workflows/execute").map_err(|_| Denied)?,
             workflow_id: workflow_id.into(),
         })
+    }
+
+    /// Setup coordinator: ordinary enrollment loads an existing protected key.
+    /// Hold the store borrow (and therefore its pins) across the HTTP operation.
+    /// The host must retain request_id before calling, including on uncertainty.
+    pub async fn enroll_existing(
+        &self,
+        store: &mut impl ProtectedKeyStore,
+        request_id: &str,
+        session: ProviderSession<'_>,
+        current_context: impl FnMut() -> String,
+    ) -> Result<EnrolledWorkstation, Denied> {
+        let key = load_existing(store).map_err(|_| Denied)?;
+        let attempt =
+            EnrollmentAttempt::new(request_id, session.technician_id, session.context, &key)?;
+        let receipt = self
+            .enroll(attempt, session.bearer, current_context)
+            .await?;
+        EnrolledWorkstation::enroll(key, session.technician_id, request_id, |_, _| Ok(receipt))
     }
 
     /// One POST, no application retry. The host supplies an existing Provider
@@ -151,16 +180,86 @@ mod tests {
         let loaded = quick_support_guard::WorkstationKey::load(&path);
         std::fs::remove_file(path).unwrap();
         let key = loaded.unwrap();
-        let attempt = EnrollmentAttempt::new(WORKFLOW, WORKFLOW, "old-session", &key).unwrap();
+        struct ExistingKey(Option<quick_support_guard::WorkstationKey>);
+        impl ProtectedKeyStore for ExistingKey {
+            fn load(&mut self) -> std::io::Result<Option<quick_support_guard::WorkstationKey>> {
+                Ok(self.0.take())
+            }
+            fn create_new(
+                &mut self,
+                _: &[u8; 32],
+            ) -> std::io::Result<quick_support_guard::WorkstationKey> {
+                panic!("ordinary enrollment must never initialize a key")
+            }
+        }
+        let mut store = ExistingKey(Some(key));
         let client =
             ProviderEnrollmentHttp::new("https://provider.example.test", WORKFLOW).unwrap();
-        let mut future = Box::pin(client.enroll(attempt, "fixture", || "replaced-session".into()));
+        let mut future = Box::pin(client.enroll_existing(
+            &mut store,
+            WORKFLOW,
+            ProviderSession {
+                technician_id: WORKFLOW,
+                context: "old-session",
+                bearer: "fixture",
+            },
+            || "replaced-session".into(),
+        ));
         let waker = Waker::from(Arc::new(Noop));
         let mut context = Context::from_waker(&waker);
         assert!(matches!(
             future.as_mut().poll(&mut context),
             Poll::Ready(Err(_))
         ));
+    }
+
+    #[test]
+    fn unavailable_store_stops_before_authentication_or_http() {
+        use std::{
+            future::Future,
+            sync::Arc,
+            task::{Context, Poll, Wake, Waker},
+        };
+        struct Noop;
+        impl Wake for Noop {
+            fn wake(self: Arc<Self>) {}
+        }
+        struct UnavailableStore(bool);
+        impl ProtectedKeyStore for UnavailableStore {
+            fn load(&mut self) -> std::io::Result<Option<quick_support_guard::WorkstationKey>> {
+                if self.0 {
+                    Err(std::io::ErrorKind::PermissionDenied.into())
+                } else {
+                    Ok(None)
+                }
+            }
+            fn create_new(
+                &mut self,
+                _: &[u8; 32],
+            ) -> std::io::Result<quick_support_guard::WorkstationKey> {
+                panic!("ordinary enrollment must never initialize")
+            }
+        }
+        let client =
+            ProviderEnrollmentHttp::new("https://provider.example.test", WORKFLOW).unwrap();
+        for denied in [false, true] {
+            let mut store = UnavailableStore(denied);
+            let mut future = Box::pin(client.enroll_existing(
+                &mut store,
+                WORKFLOW,
+                ProviderSession {
+                    technician_id: WORKFLOW,
+                    context: "session",
+                    bearer: "fixture",
+                },
+                || panic!("storage failure must precede authentication context access"),
+            ));
+            let waker = Waker::from(Arc::new(Noop));
+            assert!(matches!(
+                future.as_mut().poll(&mut Context::from_waker(&waker)),
+                Poll::Ready(Err(_))
+            ));
+        }
     }
 
     #[test]
