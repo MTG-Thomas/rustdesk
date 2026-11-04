@@ -33,7 +33,8 @@ The Windows `WorkstationStore` source implements that boundary using an already
 protected owner-only inheritable directory. It retains non-reparse ancestor and
 directory handles without delete sharing, validates key ownership/ACL/hard-link
 count, and retains the key handle without write/delete sharing. Create-new opens
-and verifies the private file before writing bytes and calling sync_all; uncertain
+and verifies the private file with the explicit qualified owner/ACL before writing
+bytes and calling sync_all; uncertain
 writes remain for reconciliation. Loading never follows a replaced path or
 regenerates corrupt data. The native fixture covers missing/broad storage,
 round-trip/reopen, overwrite/write/rename refusal and truncation. MSVC source

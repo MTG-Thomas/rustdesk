@@ -2,7 +2,11 @@ use quick_support_guard::WorkstationKey;
 use std::{
     fs::{File, OpenOptions},
     io::{self, Write},
-    os::windows::{fs::OpenOptionsExt, io::AsRawHandle},
+    os::windows::{
+        ffi::OsStrExt,
+        fs::OpenOptionsExt,
+        io::{AsRawHandle, FromRawHandle},
+    },
     path::{Component, Path, PathBuf},
 };
 use windows::Win32::{
@@ -10,11 +14,12 @@ use windows::Win32::{
     Security::{
         Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
         EqualSid, GetAce, ACCESS_ALLOWED_ACE, ACL, DACL_SECURITY_INFORMATION,
-        OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+        OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
     },
     Storage::FileSystem::{
-        GetDriveTypeW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ,
+        CreateFileW, GetDriveTypeW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_READ,
         FILE_SHARE_WRITE,
     },
 };
@@ -104,12 +109,34 @@ impl WorkstationStore {
         if self.key.is_some() {
             return Err(io::ErrorKind::AlreadyExists.into());
         }
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .share_mode(FILE_SHARE_READ.0)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
-            .open(self.root.join("workstation.key"))?;
+        // Explicitly carry the qualified owner and protected ACL into creation:
+        // an elevated token's default owner can be Administrators instead.
+        let descriptor = Descriptor::read(&self.directory)?;
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor.value.0,
+            bInheritHandle: false.into(),
+        };
+        let path: Vec<u16> = self
+            .root
+            .join("workstation.key")
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        let handle = unsafe {
+            CreateFileW(
+                windows::core::PCWSTR(path.as_ptr()),
+                (FILE_GENERIC_READ | FILE_GENERIC_WRITE).0,
+                FILE_SHARE_READ,
+                Some(&attributes),
+                CREATE_NEW,
+                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+                None,
+            )
+        }
+        .map_err(|error| io::Error::from_raw_os_error(error.code().0 & 0xffff))?;
+        let file = unsafe { File::from_raw_handle(handle.0) };
         self.key = Some(file);
         let file = self.key.as_mut().ok_or_else(denied)?;
         qualify_file(&self.directory, file)?;
