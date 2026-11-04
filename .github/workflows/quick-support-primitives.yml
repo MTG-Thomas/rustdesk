@@ -60,13 +60,13 @@ jobs:
         with:
           vcpkgDirectory: C:\vcpkg
           vcpkgGitCommitId: 9e593bb18ea69cc5095e012465dcd675a822ed0d
-      - name: Install the opus dependency required by the audio build script
+      - name: Install the vcpkg codec and audio dependencies required by the desktop build
         shell: pwsh
         run: |
           Push-Location $env:RUNNER_TEMP
           try {
-            & "$env:VCPKG_ROOT/vcpkg" install opus:x64-windows-static --x-install-root="$env:VCPKG_ROOT/installed"
-            if ($LASTEXITCODE -ne 0) { throw 'opus installation failed.' }
+            & "$env:VCPKG_ROOT/vcpkg" install opus:x64-windows-static libvpx:x64-windows-static aom:x64-windows-static libyuv:x64-windows-static --x-install-root="$env:VCPKG_ROOT/installed"
+            if ($LASTEXITCODE -ne 0) { throw 'vcpkg dependency installation failed.' }
           } finally {
             Pop-Location
           }
