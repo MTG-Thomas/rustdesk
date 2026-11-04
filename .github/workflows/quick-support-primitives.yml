@@ -92,6 +92,14 @@ jobs:
         run: |
           rustup toolchain install 1.90.0 --profile minimal
           cargo +1.90.0 test --locked --manifest-path ../../libs/base/quick_support_guard/Cargo.toml
+      - name: Execute protected workstation identity store fixture
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $output = cargo +1.90.0 test --locked --manifest-path ../../libs/base/quick_support_guard/Cargo.toml --test control workstation_store -- --test-threads=1 2>&1
+          $output | Write-Output
+          if ($LASTEXITCODE -ne 0) { throw 'Protected workstation identity store fixture failed.' }
+          if (-not ($output -match 'test result: ok\. [1-9][0-9]* passed;')) { throw 'No protected workstation identity store fixture executed.' }
       - name: Parse private signing verifier without signing credentials
         if: runner.os == 'Windows'
         shell: pwsh
