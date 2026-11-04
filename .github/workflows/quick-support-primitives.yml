@@ -75,7 +75,20 @@ jobs:
         run: |
           $output = cargo +1.90.0 test --locked --lib --features quick-support-child workstation_store -- --test-threads=1 2>&1
           $output | Write-Output
-          if ($LASTEXITCODE -ne 0) { throw 'Protected workstation identity store fixture failed.' }
+          if ($LASTEXITCODE -ne 0) {
+            $exe = Get-ChildItem target\debug\deps\librustdesk-*.exe -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($exe) {
+              $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+              $dumpbin = & $vswhere -latest -products * -find "VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe" 2>$null | Select-Object -First 1
+              if ($dumpbin) { & $dumpbin /dependents $exe.FullName | Write-Output }
+              foreach ($dll in 'opus.dll', 'libsodium.dll', 'vpx.dll', 'yuv.dll', 'aom.dll', 'sciter.dll') {
+                Write-Output "$dll -> $(where.exe $dll 2>$null)"
+              }
+            }
+            Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000; StartTime=(Get-Date).AddMinutes(-10)} -ErrorAction SilentlyContinue |
+              Select-Object -First 3 | Format-List TimeCreated, Message | Out-String | Write-Output
+            throw 'Protected workstation identity store fixture failed.'
+          }
           if (-not ($output -match 'test result: ok\. [1-9][0-9]* passed;')) {
             throw 'No protected workstation identity store fixture executed.'
           }
