@@ -51,6 +51,12 @@ mod quick_support_login;
 #[cfg(feature = "quick-support-child")]
 mod quick_support_workstation;
 #[cfg(feature = "quick-support-child")]
+mod quick_support_enrollment;
+#[cfg(feature = "quick-support-child")]
+mod quick_support_provider_http;
+#[cfg(feature = "quick-support-child")]
+mod quick_support_key_store;
+#[cfg(feature = "quick-support-child")]
 mod quick_support_receiver;
 #[cfg(all(windows, feature = "quick-support-child"))]
 #[path = "platform/quick_support_async_pipe.rs"]
