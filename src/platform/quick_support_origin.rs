@@ -2,7 +2,6 @@
 //! never the environment, customer link, pipe payload or file being verified.
 use hbb_common::base64::{engine::general_purpose::STANDARD, Engine};
 use quick_support_guard::Denied;
-use quick_support_workstation::drive_root;
 use sha2::{Digest, Sha256};
 use std::{
     fs::OpenOptions,
@@ -13,7 +12,7 @@ use std::{
         io::{AsRawHandle, BorrowedHandle},
         process::CommandExt,
     },
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf, Prefix},
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
@@ -177,6 +176,20 @@ exit 0"#;
             }
         }
     }
+}
+
+pub(super) fn drive_root(path: &Path) -> Result<[u16; 4], Denied> {
+    if !path.is_absolute() {
+        return Err(Denied);
+    }
+    let letter = match path.components().next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => letter,
+            _ => return Err(Denied),
+        },
+        _ => return Err(Denied),
+    };
+    Ok([u16::from(letter), u16::from(b':'), u16::from(b'\\'), 0])
 }
 
 fn terminate(child: &mut Child) -> Result<(), Denied> {

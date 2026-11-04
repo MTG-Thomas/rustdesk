@@ -22,7 +22,7 @@ path = "src/service.rs"
 
 [features]
 # Receiver integration is opt-in; ordinary desktop startup remains unchanged.
-quick-support-child = ["dep:quick_support_guard", "dep:quick_support_workstation", "hbb_common/quick-support-profile"]
+quick-support-child = ["dep:quick_support_guard", "hbb_common/quick-support-profile"]
 inline = []
 use_samplerate = ["samplerate", "libsamplerate-sys"]
 use_rubato = ["rubato"]
@@ -53,7 +53,6 @@ screencapturekit = ["cpal/screencapturekit"]
 
 [dependencies]
 quick_support_guard = { path = "libs/quick_support_desktop_guard", optional = true }
-quick_support_workstation = { path = "libs/quick_support_workstation", optional = true }
 async-trait = "0.1"
 scrap = { path = "libs/scrap", features = ["wayland"] }
 hbb_common = { path = "libs/hbb_common", features = ["webrtc"] }
@@ -218,7 +217,7 @@ android-wakelock = { git = "https://github.com/rustdesk-org/android-wakelock" }
 
 [workspace]
 members = ["libs/scrap", "libs/hbb_common", "libs/base", "libs/enigo", "libs/clipboard", "libs/virtual_display", "libs/virtual_display/dylib", "libs/portable", "libs/remote_printer"]
-exclude = ["vdi/host", "libs/quick_support_desktop_guard", "libs/quick_support_workstation"]
+exclude = ["vdi/host", "libs/quick_support_desktop_guard"]
 
 # Patch libxdo-sys to use a stub implementation that doesn't require libxdo
 # This allows building and running on systems without libxdo installed (e.g., Wayland-only)

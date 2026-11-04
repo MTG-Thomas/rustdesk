@@ -6540,14 +6540,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "quick_support_workstation"
-version = "0.1.0"
-dependencies = [
- "quick_support_guard",
- "windows 0.61.1",
-]
-
-[[package]]
 name = "quinn"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7261,7 +7253,6 @@ dependencies = [
  "portable-pty",
  "qrcode-generator",
  "quick_support_guard",
- "quick_support_workstation",
  "rdev",
  "remote_printer",
  "repng",

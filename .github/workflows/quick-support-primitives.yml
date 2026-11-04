@@ -43,32 +43,6 @@ jobs:
         run: |
           cargo +1.90.0 install cargo-audit --version 0.22.2 --locked
           cargo +1.90.0 audit --deny warnings --file Cargo.lock
-  workstation-store:
-    name: Windows protected workstation identity store
-    runs-on: windows-2022
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          submodules: true
-      - name: Install pinned Rust tools
-        shell: pwsh
-        run: rustup toolchain install 1.90.0 --profile minimal --component clippy
-      - name: Execute protected workstation identity store fixture
-        shell: pwsh
-        run: |
-          $output = cargo +1.90.0 test --locked --manifest-path libs/quick_support_workstation/Cargo.toml workstation_store -- --test-threads=1 2>&1
-          $output | Write-Output
-          if ($LASTEXITCODE -ne 0) { throw 'Protected workstation identity store fixture failed.' }
-          if (-not ($output -match 'test result: ok\. [1-9][0-9]* passed;')) {
-            throw 'No protected workstation identity store fixture executed.'
-          }
-      - name: Deny diagnostics in the Windows store primitive
-        shell: pwsh
-        run: |
-          cargo +1.90.0 clippy --locked --manifest-path libs/quick_support_workstation/Cargo.toml --all-targets -- -D warnings
-          if ($LASTEXITCODE -ne 0) { throw 'Protected workstation identity store diagnostics failed.' }
   artifact:
     name: Artifact verification / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -118,6 +92,14 @@ jobs:
         run: |
           rustup toolchain install 1.90.0 --profile minimal
           cargo +1.90.0 test --locked --manifest-path ../../libs/base/quick_support_guard/Cargo.toml
+      - name: Execute protected workstation identity store fixture
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $output = cargo +1.90.0 test --locked --manifest-path ../../libs/base/quick_support_guard/Cargo.toml --test control workstation_store -- --test-threads=1 2>&1
+          $output | Write-Output
+          if ($LASTEXITCODE -ne 0) { throw 'Protected workstation identity store fixture failed.' }
+          if (-not ($output -match 'test result: ok\. [1-9][0-9]* passed;')) { throw 'No protected workstation identity store fixture executed.' }
       - name: Parse private signing verifier without signing credentials
         if: runner.os == 'Windows'
         shell: pwsh
