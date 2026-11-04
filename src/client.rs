@@ -3797,6 +3797,22 @@ impl LoginConfigHandler {
         self.password.clear();
     }
 
+    #[cfg(feature = "quick-support-child")]
+    pub(crate) fn configure_enrolled_quick_support_login(
+        &mut self,
+        workstation: &crate::quick_support_workstation::EnrolledWorkstation,
+        receiver: String,
+        grant: String,
+    ) -> Result<(), quick_support_guard::Denied> {
+        // A failed attempt must not leave an older session's signer installed.
+        self.quick_support_login = None;
+        self.remember = false;
+        self.password.clear();
+        let login = workstation.login(receiver, grant)?;
+        self.configure_quick_support_login(login);
+        Ok(())
+    }
+
     /// Create a [`Message`] for login.
     fn create_login_msg(
         &self,
