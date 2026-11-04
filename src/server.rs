@@ -943,10 +943,12 @@ pub async fn stop_main_window_process() {
 /// Source-only private native host. Call only after private profile installation.
 /// Reads must be externally bounded/cancellable with the same cancellation flag;
 /// converting `native` must preserve the retained authenticated pipe handles.
+/// `make_server` runs only after the initial signed control envelope is accepted,
+/// so private profile/state cannot be initialized from an unverified launch.
 /// No command line or network route invokes this function.
 #[cfg(feature = "quick-support-child")]
 pub async fn create_quick_support_connection<P, N>(
-    server: ServerPtr,
+    make_server: impl FnOnce() -> ServerPtr,
     mut parent: P,
     native: N,
     launch: &mut impl quick_support_guard::VerifiedLaunch<P, N>,
@@ -964,6 +966,9 @@ where
         Ok::<_, quick_support_guard::Denied>(parent)
     })
     .await??;
+    // The outer control envelope is verified; only now may the private server
+    // read the pinned profile and settings.
+    let server = make_server();
     let mut stream = convert(native)?;
     let addr = "127.0.0.1:0".parse::<SocketAddr>()?;
     let control = receiver.clone();
@@ -1036,31 +1041,46 @@ fn quick_support_clock() -> Result<(u64, std::time::Instant), quick_support_guar
 /// Windows source entry for the authenticated child host; not a startup route.
 /// Verification must independently establish parent origin, signed launch/profile
 /// configuration and a fresh challenge. Bounds come from that trusted launch.
+/// `paths.0` is the dedicated control pipe; `paths.1` is the native transport, so
+/// peer traffic can never supply control material.
 #[cfg(all(windows, feature = "quick-support-child"))]
 pub async fn run_quick_support_inherited(
-    server: ServerPtr,
+    make_server: impl FnOnce() -> ServerPtr,
     paths: (&str, &str),
     bounds: (std::time::Instant, Arc<std::sync::atomic::AtomicBool>),
-    verification: (
-        impl FnMut(std::os::windows::io::BorrowedHandle<'_>) -> Result<(), quick_support_guard::Denied>,
-        impl FnMut() -> Result<quick_support_guard::ControlIdentity, quick_support_guard::Denied>,
-    ),
+    origin: crate::quick_support_child::windows_parent::origin::ParentTrust,
+    configuration: quick_support_guard::LaunchTrust,
 ) -> ResultType<()> {
     use crate::quick_support_child::windows_parent::{bounded_pipe::CancellablePipe, ParentLaunch};
     if paths.0 == paths.1 {
         bail!("private pipes must be distinct");
     }
-    let (authenticate, mut configuration) = verification;
-    let mut launch = ParentLaunch::from_environment(authenticate, || {
-        Ok((
-            configuration()?,
-            crate::quick_support_receiver::fresh_challenge()?,
-        ))
-    })?;
-    let control = CancellablePipe::connect(paths.0, bounds.0, bounds.1.clone())?;
-    let native = CancellablePipe::connect(paths.1, bounds.0, bounds.1.clone())?;
+    let paths = (paths.0.to_owned(), paths.1.to_owned());
+    let cancelled = bounds.1.clone();
+    // Origin verification can launch the bounded OS verifier. Keep it and pipe
+    // opening off the async executor, retaining the same handles on return.
+    let (control, native, mut launch) = tokio::task::spawn_blocking(move || {
+        let launch = ParentLaunch::from_environment(
+            |parent| {
+                crate::quick_support_child::windows_parent::origin::verify_parent(parent, &origin)
+            },
+            (),
+        )?;
+        crate::quick_support_child::windows_parent::profile::install_after_parent_verification()?;
+        let identity =
+            crate::quick_support_child::windows_parent::profile::load_launch_configuration(
+                configuration,
+            )?;
+        let mut prepared = Some((identity, crate::quick_support_receiver::fresh_challenge()?));
+        let launch =
+            launch.with_configuration(move || prepared.take().ok_or(quick_support_guard::Denied));
+        let control = CancellablePipe::connect(&paths.0, bounds.0, cancelled.clone())?;
+        let native = CancellablePipe::connect(&paths.1, bounds.0, cancelled)?;
+        Ok::<_, quick_support_guard::Denied>((control, native, launch))
+    })
+    .await??;
     create_quick_support_connection(
-        server,
+        make_server,
         control,
         native,
         &mut launch,

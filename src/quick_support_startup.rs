@@ -5,6 +5,9 @@ pub(crate) fn is_private_launch(
 ) -> bool {
     args.into_iter().any(|arg| {
         let arg = arg.as_ref().to_string_lossy();
-        arg == "--quick-support-private-pipes" || arg.starts_with("--quick-support-private-pipes=")
+        arg == "--quick-support-private-pipes"
+            || arg.starts_with("--quick-support-private-pipes=")
+            || arg == "--quick-support-control-pipe"
+            || arg.starts_with("--quick-support-control-pipe=")
     })
 }

@@ -1,5 +1,10 @@
 #[cfg(windows)]
+#[path = "../../../hbb_common/src/private_profile.rs"]
+pub mod private_profile;
+#[cfg(windows)]
 extern crate self as hbb_common;
+#[cfg(windows)]
+pub use base64;
 #[cfg(windows)]
 pub use tokio;
 #[cfg(windows)]
@@ -55,6 +60,28 @@ fn identity(f: &Fixture) -> ControlIdentity {
 }
 fn session(f: &Fixture) -> ControlSession {
     ControlSession::new(identity(f)).unwrap()
+}
+fn nested_bootstrap(token: &str) -> String {
+    let claims: Value = serde_json::from_slice(
+        &URL_SAFE_NO_PAD
+            .decode(token.split('.').nth(1).unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    claims["bootstrap"].as_str().unwrap().into()
+}
+fn peer_frame(payload: &[u8]) -> Vec<u8> {
+    let width = if payload.len() < 1 << 6 {
+        1usize
+    } else if payload.len() < 1 << 14 {
+        2
+    } else {
+        3
+    };
+    let mut frame =
+        (((payload.len() as u32) << 2) | (width as u32 - 1)).to_le_bytes()[..width].to_vec();
+    frame.extend_from_slice(payload);
+    frame
 }
 fn resign(token: &str, change: impl FnOnce(&mut Value)) -> String {
     let parts: Vec<_> = token.split('.').collect();
@@ -234,6 +261,38 @@ fn child_dispatch_requires_control_grant_and_local_consent() {
             |_| -> Result<(), Denied> { panic!("dispatch after control failure") }
         )
         .is_err());
+}
+
+#[test]
+fn nested_bootstrap_alone_never_initializes_control() {
+    let f = fixture();
+    let start = Instant::now();
+    let nested = nested_bootstrap(&f.bootstrap);
+    // The signed inner bootstrap is a different envelope type than the outer control.
+    assert!(session(&f).apply(&nested, 1000, start).is_err());
+    let mut child =
+        ChildConnection::new(identity(&f), "01234567890123456789012345678901".into()).unwrap();
+    assert!(child.parent_control(&nested, 1000, start).is_err());
+    assert!(child.parent_control(&f.bootstrap, 1000, start).is_err());
+    assert!(!child.can_control(start));
+}
+
+#[test]
+fn peer_transport_bytes_never_apply_or_replace_parent_control() {
+    let f = fixture();
+    let start = Instant::now();
+    let mut child =
+        ChildConnection::new(identity(&f), "01234567890123456789012345678901".into()).unwrap();
+    // A valid outer control token delivered as native traffic is still peer data.
+    assert!(child
+        .dispatch_frame(
+            &peer_frame(f.bootstrap.as_bytes()),
+            start,
+            |_| -> Result<(), Denied> { panic!("peer bytes reached dispatch before control") }
+        )
+        .is_err());
+    assert!(!child.can_control(start));
+    assert!(child.parent_control(&f.bootstrap, 1000, start).is_err());
 }
 
 #[test]
@@ -872,6 +931,7 @@ fn receiver_interop_child() {
     let steps = Cell::new(0usize);
     let dispatched = Cell::new(0usize);
     let parent = RefCell::new(None::<OwnedHandle>);
+    let configuration = RefCell::new(None::<ControlIdentity>);
     let rendezvous = RefCell::new(None::<LocalPipe>);
     let result = run_inherited(
         (&input.control, &input.relay),
@@ -887,6 +947,20 @@ fn receiver_interop_child() {
                     unsafe { GetProcessId(HANDLE(handle.as_raw_handle())) },
                     input.parent_pid
                 );
+                desktop_child::windows_parent::profile::install_after_parent_verification()?;
+                let pins = identity(&f);
+                let scope = desktop_child::windows_parent::profile::load_launch_configuration(
+                    quick_support_guard::LaunchTrust {
+                        issuer: pins.issuer,
+                        issuer_key: pins.issuer_key,
+                        organization_id: pins.organization_id,
+                        solution_id: pins.solution_id,
+                    },
+                )?;
+                assert_eq!(scope.session_id, f.session_id);
+                assert_eq!(scope.generation, f.generation);
+                assert_eq!(scope.receiver_id, f.receiver_id);
+                configuration.replace(Some(scope));
                 parent.replace(Some(handle.try_clone_to_owned().unwrap()));
                 Ok(())
             },
@@ -895,12 +969,14 @@ fn receiver_interop_child() {
                 let retained = retained.as_ref().unwrap();
                 let pipe = LocalPipe::connect(&input.rendezvous)?;
                 let mut launch =
-                    ParentLaunch::new(retained.as_handle().try_clone_to_owned().unwrap(), || {
-                        Ok((identity(&f), challenge.to_owned()))
-                    });
+                    ParentLaunch::new(retained.as_handle().try_clone_to_owned().unwrap(), ())
+                        .with_configuration(|| Ok((identity(&f), challenge.to_owned())));
                 launch.verify_parent_and_config(&pipe, &pipe)?;
                 rendezvous.replace(Some(pipe));
-                Ok((identity(&f), challenge.to_owned()))
+                Ok((
+                    configuration.borrow_mut().take().ok_or(Denied)?,
+                    challenge.to_owned(),
+                ))
             },
         ),
         &mut SyntheticConsent(input.allow_consent),
@@ -966,4 +1042,34 @@ fn receiver_interop_child() {
     // The controller must prove Job Object teardown, rather than letting this
     // synthetic child exit itself and accidentally satisfy the cleanup check.
     std::thread::sleep(Duration::from_secs(30));
+}
+
+#[test]
+fn session_length_binding_accepts_only_live_bounded_terminal_revoke() {
+    let f = fixture();
+    let start = Instant::now();
+    for (hard_expiry, now, accepted) in
+        [(4600, 1700, true), (1730, 1700, true), (1700, 1700, false)]
+    {
+        let outer = resign(&f.bootstrap, |control| {
+            let bootstrap = control["bootstrap"].as_str().unwrap();
+            control["bootstrap"] = resign(bootstrap, |claims| {
+                claims["exp"] = hard_expiry.into();
+            })
+            .into();
+        });
+        let mut session = session(&f);
+        session.apply(&outer, 1000, start).unwrap();
+        let revoke = resign(&f.revoke, |control| {
+            control["sequence"] = 2.into();
+            control["iat"] = now.into();
+            control["exp"] = std::cmp::min(now + 60, hard_expiry).into();
+        });
+        let instant = start + Duration::from_secs(now - 1000);
+        assert_eq!(session.apply(&revoke, now, instant).is_ok(), accepted);
+        if accepted {
+            assert!(session.apply(&outer, now, instant).is_err());
+            assert!(session.apply(&revoke, now, instant).is_err());
+        }
+    }
 }

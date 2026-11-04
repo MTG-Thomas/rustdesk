@@ -5,6 +5,9 @@ import (
 	"crypto/tls"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/MTG-Thomas/rustdesk/tools/quick-support-launcher/internal/artifact"
@@ -20,12 +23,12 @@ import (
 // parent handoff. Source controls are opaque here: the qualified receiver must
 // verify them and require separate real local consent before privileged dispatch.
 // The existing Run path is unchanged; this API is not a default entry point.
-func RunWithReceiverControl(parent context.Context, release string, trust artifact.ReleaseTrust, lease *transport.Lease, controls <-chan string) (result error) {
+func RunWithReceiverControl(parent context.Context, release string, trust artifact.ReleaseTrust, lease *transport.Lease, controls <-chan string, configuration func(context.Context, string) (string, error)) (result error) {
 	if lease == nil {
 		return ErrStopped
 	}
 	defer lease.Close()
-	if controls == nil {
+	if controls == nil || configuration == nil {
 		return ErrStopped
 	}
 	ctx, cancel, err := lease.Bind(parent)
@@ -59,6 +62,25 @@ func RunWithReceiverControl(parent context.Context, release string, trust artifa
 	if artifact.Fetch(ctx, client, policy, executable, artifact.VerifyWindowsAuthenticode) != nil {
 		return ErrStopped
 	}
+	// This callback must use the authoritative receiver issuer and its existing
+	// authenticated install/session binding. Transport tickets are insufficient.
+	launch, err := configuration(ctx, strings.TrimPrefix(filepath.Base(path), "mtg-quick-support-"))
+	if err != nil || len(launch) == 0 || len(launch) > 4096 || ctx.Err() != nil {
+		return ErrStopped
+	}
+	launchPath, err := directory.FilePath("receiver-launch.jwt")
+	if err != nil {
+		return ErrStopped
+	}
+	launchFile, err := os.OpenFile(launchPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return ErrStopped
+	}
+	n, writeErr := launchFile.WriteString(launch)
+	closeErr := launchFile.Close()
+	if writeErr != nil || closeErr != nil || n != len(launch) {
+		return ErrStopped
+	}
 	control, err := privateipc.New()
 	if err != nil {
 		return ErrStopped
@@ -86,8 +108,17 @@ func RunWithReceiverControl(parent context.Context, release string, trust artifa
 			return ErrStopped
 		}
 	}
-	child, err := contained.StartSuspendedWithParent(ctx, executable, []string{"--quick-support-private-pipes", pipes[0].Path(), pipes[1].Path(), "--quick-support-control-pipe", control.Path()}, path)
+	profile, err := directory.ProfileHandle()
 	if err != nil {
+		return ErrStopped
+	}
+	child, err := contained.StartSuspendedWithProfile(ctx, executable, []string{"--quick-support-private-pipes", pipes[0].Path(), pipes[1].Path(), "--quick-support-control-pipe", control.Path()}, path, profile)
+	profileErr := windows.CloseHandle(profile)
+	if profileErr != nil && child != nil {
+		child.Close()
+		return ErrStopped
+	}
+	if err != nil || profileErr != nil {
 		return ErrStopped
 	}
 	defer func() {

@@ -9,6 +9,12 @@ fn private_launch_never_selects_legacy_startup() {
         vec!["--server", "--quick-support-private-pipes", "a", "b"],
         vec!["--install", "--quick-support-private-pipes=a"],
         vec!["--", "--quick-support-private-pipes", "a", "b"],
+        vec!["--quick-support-control-pipe"],
+        vec![
+            "--quick-support-control-pipe",
+            r"\\.\pipe\mtg-quick-support-0000000000000000000000000000000000000000000000000000000000000000",
+        ],
+        vec!["--quick-support-control-pipe=pipe"],
     ] {
         assert!(startup::is_private_launch(args));
     }

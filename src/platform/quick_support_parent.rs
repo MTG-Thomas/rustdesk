@@ -22,6 +22,12 @@ use windows::Win32::{
     },
 };
 
+#[path = "quick_support_origin.rs"]
+pub mod origin;
+
+#[path = "quick_support_profile.rs"]
+pub mod profile;
+
 pub struct LocalPipe(File);
 
 #[path = "quick_support_bounded_pipe.rs"]
@@ -68,6 +74,13 @@ impl<C> ParentLaunch<C> {
     pub fn new(parent: OwnedHandle, configuration: C) -> Self {
         Self {
             parent,
+            configuration,
+        }
+    }
+
+    pub fn with_configuration<D>(self, configuration: D) -> ParentLaunch<D> {
+        ParentLaunch {
+            parent: self.parent,
             configuration,
         }
     }

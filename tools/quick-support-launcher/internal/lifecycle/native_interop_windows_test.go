@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -78,6 +79,11 @@ func TestGoRustReceiverInteroperability(t *testing.T) {
 	var vector struct {
 		Bootstrap, Grant, Renew, Revoke string
 		ReceiverID                      string `json:"receiver_id"`
+		Issuer                          string `json:"issuer"`
+		OrganizationID                  string `json:"organization_id"`
+		SolutionID                      string `json:"solution_id"`
+		SessionID                       string `json:"session_id"`
+		Generation                      string `json:"generation"`
 	}
 	data, err := os.ReadFile("../../../../libs/base/quick_support_guard/tests/fixtures/receiver-control-v1.json")
 	if err != nil || json.Unmarshal(data, &vector) != nil {
@@ -120,9 +126,30 @@ func TestGoRustReceiverInteroperability(t *testing.T) {
 			if err != nil || os.WriteFile(filepath.Join(path, "receiver.fixture.json"), encoded, 0600) != nil {
 				t.Fatal("cannot stage fixture input")
 			}
-			child, err := contained.StartSuspendedWithParent(ctx, executable, []string{"--ignored", "--exact", "receiver_interop_child", "--nocapture"}, path)
+			// Existing synthetic issuer identity only; no production key or consent.
+			header, err := json.Marshal(map[string]string{"alg": "EdDSA", "typ": "rd-qs-launch+jwt"})
 			if err != nil {
 				t.Fatal(err)
+			}
+			now := time.Now().Unix()
+			claims, err := json.Marshal(map[string]any{"iss": vector.Issuer, "aud": "rustdesk-quick-support", "organization_id": vector.OrganizationID, "solution_id": vector.SolutionID, "session_id": vector.SessionID, "generation": vector.Generation, "receiver_id": vector.ReceiverID, "profile_nonce": strings.TrimPrefix(filepath.Base(path), "mtg-quick-support-"), "iat": now, "exp": now + 60})
+			if err != nil {
+				t.Fatal(err)
+			}
+			unsigned := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(claims)
+			signature := ed25519.Sign(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32)), []byte(unsigned))
+			launch := unsigned + "." + base64.RawURLEncoding.EncodeToString(signature)
+			if os.WriteFile(filepath.Join(path, "receiver-launch.jwt"), []byte(launch), 0600) != nil {
+				t.Fatal("cannot stage synthetic launch configuration")
+			}
+			profile, err := directory.ProfileHandle()
+			if err != nil {
+				t.Fatal(err)
+			}
+			child, err := contained.StartSuspendedWithProfile(ctx, executable, []string{"--ignored", "--exact", "receiver_interop_child", "--nocapture"}, path, profile)
+			profileErr := windows.CloseHandle(profile)
+			if err != nil || profileErr != nil {
+				t.Fatal(err, profileErr)
 			}
 			defer child.Close()
 			handle, err := child.ProcessHandle()
