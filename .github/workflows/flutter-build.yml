@@ -20,6 +20,7 @@ on:
 env:
   SCITER_RUST_VERSION: "1.75" # https://github.com/rustdesk/rustdesk/discussions/7503, also 1.78 has ABI change which causes our sciter version not working, https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
   RUST_VERSION: "1.75" # sciter failed on m1 with 1.78 because of https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
+  WINDOWS_FLUTTER_RUST_VERSION: "1.90.0" # Patched dependency manifests require Rust 2024 support.
   ANDROID_RUST_VERSION: "1.90.0" # Existing Android dependencies require newer Rust; retain Sciter ABI pins.
   LINUX_FLUTTER_RUST_VERSION: "1.90.0" # Keep non-Sciter Linux builds compatible with locked dependencies.
   MAC_RUST_VERSION: "1.90.0" # Patched dependency manifests require Rust 2024 support.
@@ -242,7 +243,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
-          toolchain: ${{ env.SCITER_RUST_VERSION }}
+          toolchain: ${{ env.WINDOWS_FLUTTER_RUST_VERSION }}
           targets: ${{ matrix.job.target }}
           components: "rustfmt"
 
