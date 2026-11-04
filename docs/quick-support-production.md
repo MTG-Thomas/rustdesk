@@ -392,3 +392,26 @@ control, and that an outer control envelope delivered as native peer bytes
 neither authorizes nor replaces the parent-control channel. The full desktop
 feature build was not re-qualified here; ordinary startup still refuses a
 private launch and no production host is enabled.
+
+## Additional client patch candidate
+
+The next local security candidate updates quinn-proto 0.11.15 to 0.11.19 and
+libz-sys 1.1.18 to 1.1.31. Registry checksums and publisher continuity were checked;
+the Quinn patch requires its newer random-number dependency family. Other package
+versions remain unchanged. An unrelated resolver change to libloading's allowed
+Windows target edge was restored to the previously locked, compatible version.
+Quinn's minimum Rust version remains 1.85; this does not establish the desktop's
+older declared Rust 1.75 claim.
+
+The published Quinn source passed 306 protocol tests in an isolated copy, with
+its main dependency versions retained from the application lockfile. The updated
+zlib binding passed a Linux compress/decompress round trip and malformed-input
+rejection. These are focused component checks, not a Windows release/application
+build. Direct selection of the host-only libz dependency hit a Cargo 1.90 resolver
+panic, so no passing desktop build is inferred from that attempt.
+
+Against the same cached advisory database, vulnerability entries decrease from
+19 to 13; all 31 warnings remain and the audit still fails. No finding is waived.
+Remaining vulnerable roots include crypto-bigint, idna, libgit2-sys, quick-xml,
+ringbuf, time and users. Fresh release audit, complete application CI and actual
+Windows acceptance remain required before production.
