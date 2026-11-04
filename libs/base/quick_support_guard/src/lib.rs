@@ -463,5 +463,8 @@ pub use pipe::{LocalConsent, PipeAdapter, VerifiedLaunch};
 mod workstation;
 pub use workstation::WorkstationLogin;
 
+mod workstation_key;
+pub use workstation_key::WorkstationKey;
+
 mod launch;
 pub use launch::{LaunchTrust, LaunchVerifier};
