@@ -46,52 +46,29 @@ jobs:
   workstation-store:
     name: Windows protected workstation identity store
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           submodules: true
-      - name: Install pinned Rust toolchain
+      - name: Install pinned Rust tools
         shell: pwsh
-        run: rustup toolchain install 1.90.0 --profile minimal
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
-        with:
-          vcpkgDirectory: C:\vcpkg
-          vcpkgGitCommitId: 9e593bb18ea69cc5095e012465dcd675a822ed0d
-      - name: Install the vcpkg codec and audio dependencies required by the desktop build
-        shell: pwsh
-        run: |
-          Push-Location $env:RUNNER_TEMP
-          try {
-            & "$env:VCPKG_ROOT/vcpkg" install opus:x64-windows-static libvpx:x64-windows-static aom:x64-windows-static libyuv:x64-windows-static --x-install-root="$env:VCPKG_ROOT/installed"
-            if ($LASTEXITCODE -ne 0) { throw 'vcpkg dependency installation failed.' }
-          } finally {
-            Pop-Location
-          }
+        run: rustup toolchain install 1.90.0 --profile minimal --component clippy
       - name: Execute protected workstation identity store fixture
         shell: pwsh
         run: |
-          $output = cargo +1.90.0 test --locked --lib --features quick-support-child workstation_store -- --test-threads=1 2>&1
+          $output = cargo +1.90.0 test --locked --manifest-path libs/quick_support_workstation/Cargo.toml workstation_store -- --test-threads=1 2>&1
           $output | Write-Output
-          if ($LASTEXITCODE -ne 0) {
-            $exe = Get-ChildItem target\debug\deps\librustdesk-*.exe -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            if ($exe) {
-              $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-              $dumpbin = & $vswhere -latest -products * -find "VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe" 2>$null | Select-Object -First 1
-              if ($dumpbin) { & $dumpbin /dependents $exe.FullName | Write-Output }
-              foreach ($dll in 'opus.dll', 'libsodium.dll', 'vpx.dll', 'yuv.dll', 'aom.dll', 'sciter.dll') {
-                Write-Output "$dll -> $(where.exe $dll 2>$null)"
-              }
-            }
-            Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000; StartTime=(Get-Date).AddMinutes(-10)} -ErrorAction SilentlyContinue |
-              Select-Object -First 3 | Format-List TimeCreated, Message | Out-String | Write-Output
-            throw 'Protected workstation identity store fixture failed.'
-          }
+          if ($LASTEXITCODE -ne 0) { throw 'Protected workstation identity store fixture failed.' }
           if (-not ($output -match 'test result: ok\. [1-9][0-9]* passed;')) {
             throw 'No protected workstation identity store fixture executed.'
           }
+      - name: Deny diagnostics in the Windows store primitive
+        shell: pwsh
+        run: |
+          cargo +1.90.0 clippy --locked --manifest-path libs/quick_support_workstation/Cargo.toml --all-targets -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw 'Protected workstation identity store diagnostics failed.' }
   artifact:
     name: Artifact verification / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

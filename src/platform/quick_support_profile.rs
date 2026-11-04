@@ -1,7 +1,6 @@
 //! Process-lifetime profile pin, adopted only after independent parent verification.
-#[path = "quick_support_workstation_store.rs"]
-pub mod workstation_store;
 use quick_support_guard::Denied;
+use quick_support_workstation::{information, owner_only};
 use std::{
     fs::{File, OpenOptions},
     io::Read,
@@ -14,22 +13,13 @@ use std::{
 };
 use windows::Win32::{
     Foundation::{
-        DuplicateHandle, GetHandleInformation, LocalFree, SetHandleInformation,
-        DUPLICATE_HANDLE_OPTIONS, HANDLE, HANDLE_FLAGS, HANDLE_FLAG_INHERIT, HLOCAL,
-    },
-    Security::{
-        Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
-        EqualSid, GetAce, GetSecurityDescriptorControl, GetTokenInformation, TokenUser,
-        ACCESS_ALLOWED_ACE, ACL, CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION,
-        OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-        SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER,
+        DuplicateHandle, GetHandleInformation, SetHandleInformation, DUPLICATE_HANDLE_OPTIONS,
+        HANDLE, HANDLE_FLAGS, HANDLE_FLAG_INHERIT,
     },
     Storage::FileSystem::{
-        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ,
-        FILE_SHARE_WRITE,
+        BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
     },
-    System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
 
 struct ProfilePin {
@@ -182,14 +172,6 @@ fn profile_nonce(root: &Path) -> Result<String, Denied> {
     }
     Ok(nonce.to_owned())
 }
-fn information(handle: HANDLE) -> Result<BY_HANDLE_FILE_INFORMATION, Denied> {
-    let mut info = BY_HANDLE_FILE_INFORMATION::default();
-    unsafe { GetFileInformationByHandle(handle, &mut info) }.map_err(|_| Denied)?;
-    if info.dwFileAttributes & 0x10 == 0 || info.dwFileAttributes & 0x400 != 0 {
-        return Err(Denied);
-    }
-    Ok(info)
-}
 fn same_directory(
     a: &BY_HANDLE_FILE_INFORMATION,
     b: &BY_HANDLE_FILE_INFORMATION,
@@ -202,86 +184,6 @@ fn same_directory(
     }
     Ok(())
 }
-struct Descriptor(PSECURITY_DESCRIPTOR);
-impl Drop for Descriptor {
-    fn drop(&mut self) {
-        unsafe { LocalFree(Some(HLOCAL(self.0 .0))) };
-    }
-}
-fn owner_only(handle: HANDLE) -> Result<(), Denied> {
-    let mut owner = PSID::default();
-    let mut acl: *mut ACL = std::ptr::null_mut();
-    let mut descriptor = PSECURITY_DESCRIPTOR::default();
-    unsafe {
-        GetSecurityInfo(
-            handle,
-            SE_FILE_OBJECT,
-            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-            Some(&mut owner),
-            None,
-            Some(&mut acl),
-            None,
-            Some(&mut descriptor),
-        )
-    }
-    .ok()
-    .map_err(|_| Denied)?;
-    let descriptor = Descriptor(descriptor);
-    let mut token = HANDLE::default();
-    unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }
-        .map_err(|_| Denied)?;
-    let token = unsafe { OwnedHandle::from_raw_handle(token.0) };
-    let mut needed = 0;
-    let _ = unsafe {
-        GetTokenInformation(
-            HANDLE(token.as_raw_handle()),
-            TokenUser,
-            None,
-            0,
-            &mut needed,
-        )
-    };
-    if needed == 0 || needed > 65536 {
-        return Err(Denied);
-    }
-    let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
-    unsafe {
-        GetTokenInformation(
-            HANDLE(token.as_raw_handle()),
-            TokenUser,
-            Some(buffer.as_mut_ptr().cast()),
-            (buffer.len() * 8) as u32,
-            &mut needed,
-        )
-    }
-    .map_err(|_| Denied)?;
-    let user = unsafe { &*buffer.as_ptr().cast::<TOKEN_USER>() };
-    unsafe { EqualSid(owner, user.User.Sid) }.map_err(|_| Denied)?;
-    let mut control = 0;
-    let mut revision = 0;
-    unsafe { GetSecurityDescriptorControl(descriptor.0, &mut control, &mut revision) }
-        .map_err(|_| Denied)?;
-    if control & SE_DACL_PROTECTED.0 == 0 || acl.is_null() || unsafe { (*acl).AceCount } != 1 {
-        return Err(Denied);
-    }
-    let mut ace = std::ptr::null_mut();
-    unsafe { GetAce(acl, 0, &mut ace) }.map_err(|_| Denied)?;
-    let ace = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
-    // ACCESS_ALLOWED_ACE_TYPE is zero. Require the exact inheritable owner-only ACL.
-    if ace.Header.AceType != 0
-        || u32::from(ace.Header.AceFlags) != (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE).0
-    {
-        return Err(Denied);
-    }
-    unsafe {
-        EqualSid(
-            PSID(std::ptr::addr_of!(ace.SidStart).cast_mut().cast()),
-            user.User.Sid,
-        )
-    }
-    .map_err(|_| Denied)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,15 +194,25 @@ mod tests {
     use windows::{
         core::{PCWSTR, PWSTR},
         Win32::{
+            Foundation::{LocalFree, HLOCAL},
             Security::{
                 Authorization::{
                     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
                 },
-                SECURITY_ATTRIBUTES,
+                GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
+                TOKEN_QUERY, TOKEN_USER,
             },
             Storage::FileSystem::CreateDirectoryW,
+            System::Threading::{GetCurrentProcess, OpenProcessToken},
         },
     };
+
+    struct Descriptor(PSECURITY_DESCRIPTOR);
+    impl Drop for Descriptor {
+        fn drop(&mut self) {
+            unsafe { LocalFree(Some(HLOCAL(self.0 .0))) };
+        }
+    }
 
     fn secure_directory(path: &Path) {
         let mut token = HANDLE::default();
@@ -355,53 +267,6 @@ mod tests {
         let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
         unsafe { CreateDirectoryW(PCWSTR(path.as_ptr()), Some(&attributes)) }.unwrap();
     }
-    #[test]
-    fn workstation_store_pins_private_identity_and_refuses_replacement_or_corruption() {
-        use super::workstation_store::WorkstationStore;
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let base =
-            std::env::temp_dir().join(format!("qs-workstation-{}-{unique}", std::process::id()));
-        std::fs::create_dir(&base).unwrap();
-        assert!(WorkstationStore::open(&base).is_err());
-        let root = base.join("private");
-        secure_directory(&root);
-        let mut store = WorkstationStore::open(&root).unwrap();
-        assert!(store.load().unwrap().is_none());
-        let public =
-            crate::quick_support_key_store::initialize_explicitly(&mut store, || Ok([9; 32]))
-                .unwrap()
-                .public_key();
-        assert_eq!(
-            crate::quick_support_key_store::load_existing(&mut store)
-                .unwrap()
-                .public_key(),
-            public
-        );
-        assert!(store.create_seed(&[7; 32]).is_err());
-        assert!(OpenOptions::new()
-            .write(true)
-            .open(root.join("workstation.key"))
-            .is_err());
-        assert!(std::fs::rename(&root, base.join("replaced")).is_err());
-        drop(store);
-        let mut reopened = WorkstationStore::open(&root).unwrap();
-        assert_eq!(reopened.load().unwrap().unwrap().public_key(), public);
-        drop(reopened);
-        std::fs::write(root.join("workstation.key"), [9]).unwrap();
-        let mut corrupt = WorkstationStore::open(&root).unwrap();
-        assert_eq!(
-            corrupt.load().err().unwrap().kind(),
-            std::io::ErrorKind::InvalidData
-        );
-        assert!(corrupt.create_seed(&[9; 32]).is_err());
-        drop(corrupt);
-        assert_eq!(std::fs::read(root.join("workstation.key")).unwrap(), [9]);
-        std::fs::remove_dir_all(base).unwrap();
-    }
-
     fn advertise(handle: &OwnedHandle) {
         unsafe {
             SetHandleInformation(
