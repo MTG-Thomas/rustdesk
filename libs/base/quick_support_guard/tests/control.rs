@@ -1043,3 +1043,33 @@ fn receiver_interop_child() {
     // synthetic child exit itself and accidentally satisfy the cleanup check.
     std::thread::sleep(Duration::from_secs(30));
 }
+
+#[test]
+fn session_length_binding_accepts_only_live_bounded_terminal_revoke() {
+    let f = fixture();
+    let start = Instant::now();
+    for (hard_expiry, now, accepted) in
+        [(4600, 1700, true), (1730, 1700, true), (1700, 1700, false)]
+    {
+        let outer = resign(&f.bootstrap, |control| {
+            let bootstrap = control["bootstrap"].as_str().unwrap();
+            control["bootstrap"] = resign(bootstrap, |claims| {
+                claims["exp"] = hard_expiry.into();
+            })
+            .into();
+        });
+        let mut session = session(&f);
+        session.apply(&outer, 1000, start).unwrap();
+        let revoke = resign(&f.revoke, |control| {
+            control["sequence"] = 2.into();
+            control["iat"] = now.into();
+            control["exp"] = std::cmp::min(now + 60, hard_expiry).into();
+        });
+        let instant = start + Duration::from_secs(now - 1000);
+        assert_eq!(session.apply(&revoke, now, instant).is_ok(), accepted);
+        if accepted {
+            assert!(session.apply(&outer, now, instant).is_err());
+            assert!(session.apply(&revoke, now, instant).is_err());
+        }
+    }
+}
