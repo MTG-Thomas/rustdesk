@@ -22,7 +22,7 @@ env:
   RUST_VERSION: "1.75" # sciter failed on m1 with 1.78 because of https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
   ANDROID_RUST_VERSION: "1.90.0" # Existing Android dependencies require newer Rust; retain Sciter ABI pins.
   LINUX_FLUTTER_RUST_VERSION: "1.90.0" # Keep non-Sciter Linux builds compatible with locked dependencies.
-  MAC_RUST_VERSION: "1.81" # 1.81 is requred for macos, because of https://github.com/yury/cidre requires 1.81
+  MAC_RUST_VERSION: "1.90.0" # Patched dependency manifests require Rust 2024 support.
   CARGO_NDK_VERSION: "3.1.2"
   SCITER_ARMV7_CMAKE_VERSION: "3.29.7"
   SCITER_NASM_DEBVERSION: "2.15.05-1"
@@ -523,6 +523,13 @@ jobs:
             --target ${{ matrix.job.target }} --component rustfmt \
             --profile minimal --no-self-update --force-non-host
           rustup default nightly-2023-10-13-${{ matrix.job.target }} --force-non-host
+          # Modern Cargo parses patched optional dependency metadata; retain the
+          # original compiler and host architecture for Sciter's ABI/build scripts.
+          rustup toolchain install 1.90.0-${{ matrix.job.target }} \
+            --profile minimal --no-self-update --force-non-host
+          echo "RUSTC=$(rustup which --toolchain nightly-2023-10-13-${{ matrix.job.target }} rustc)" >> "$GITHUB_ENV"
+          echo "RUSTDOC=$(rustup which --toolchain nightly-2023-10-13-${{ matrix.job.target }} rustdoc)" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=${{ github.workspace }}/tools/sciter-cargo-rustc.cmd" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -562,8 +569,8 @@ jobs:
           python3 res/inline-sciter.py
           # Patch sciter x86
           sed -i 's/branch = "dyn"/branch = "dyn_x86"/g' ./Cargo.toml
-          cargo update -p sciter-rs --precise 674e07d3066ca9a92ced3816203ab6b652629d1e
-          cargo build --locked --features inline,vram,hwcodec --release --bins
+          cargo +1.90.0-${{ matrix.job.target }} update -p sciter-rs --precise 674e07d3066ca9a92ced3816203ab6b652629d1e
+          cargo +1.90.0-${{ matrix.job.target }} build --locked --features inline,vram,hwcodec --release --bins
           mkdir -p ./Release
           mv ./target/release/rustdesk.exe ./Release/rustdesk.exe
           curl -LJ -o ./Release/sciter.dll https://github.com/c-smile/sciter-sdk/raw/master/bin.win/x32/sciter.dll
