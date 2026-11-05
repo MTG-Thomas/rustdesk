@@ -18,6 +18,7 @@ fn private_launch_never_selects_legacy_startup() {
     ] {
         assert!(startup::is_private_launch(args));
     }
+    assert!(startup::private_launch().is_none());
 }
 
 #[test]

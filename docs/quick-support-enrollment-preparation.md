@@ -105,7 +105,9 @@ Bifrost's own login page in the system browser through the native CLI loopback
 contract (`/auth/cli/start`, localhost callback, `/auth/cli/token`, `/auth/me`);
 that page covers password, MFA, passkeys and any configured SSO, so other
 Bifrost auth providers and OIDC configurations are reached through the same
-entry. PKCE stays server-side in Bifrost. The authorization URL is confined to
+entry. The CLI flow keeps PKCE in the desktop client (verifier generated
+locally, challenge submitted, verifier redeemed); any upstream OAuth PKCE stays
+server-side in Bifrost. The authorization URL is confined to
 the pinned origin; callback parameters require `code`, `state` and the CLI
 transaction id, while bounded extras are ignored and provider errors are
 rejected. Direct native `/auth/oauth/*` SSO is deferred: advertising `localhost`

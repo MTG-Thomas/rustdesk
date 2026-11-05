@@ -40,8 +40,19 @@ impl ProviderConfig {
         if Uuid::parse_str(workflow_id).is_err() {
             return Err(Denied);
         }
+        let origin = Url::parse(origin).map_err(|_| Denied)?;
+        if origin.scheme() != "https"
+            || origin.host_str().is_none()
+            || !origin.username().is_empty()
+            || origin.password().is_some()
+            || origin.query().is_some()
+            || origin.fragment().is_some()
+            || origin.path() != "/"
+        {
+            return Err(Denied);
+        }
         Ok(Self {
-            origin: provider_origin(origin)?,
+            origin,
             workflow_id: workflow_id.into(),
         })
     }
@@ -49,21 +60,6 @@ impl ProviderConfig {
     fn enrollment(&self) -> Result<ProviderEnrollmentHttp, Denied> {
         ProviderEnrollmentHttp::new(self.origin.as_str(), &self.workflow_id)
     }
-}
-
-fn provider_origin(origin: &str) -> Result<Url, Denied> {
-    let origin = Url::parse(origin).map_err(|_| Denied)?;
-    if origin.scheme() != "https"
-        || origin.host_str().is_none()
-        || !origin.username().is_empty()
-        || origin.password().is_some()
-        || origin.query().is_some()
-        || origin.fragment().is_some()
-        || origin.path() != "/"
-    {
-        return Err(Denied);
-    }
-    Ok(origin)
 }
 
 /// One in-memory Provider login. The bearer never leaves this value except into a
@@ -362,25 +358,6 @@ fn origin_authorization_url(origin: &Url, start: &Value) -> Result<Url, Denied> 
     Ok(url)
 }
 
-fn base64url(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let value = (u32::from(chunk[0]) << 16)
-            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
-            | u32::from(*chunk.get(2).unwrap_or(&0));
-        encoded.push(ALPHABET[(value >> 18) as usize & 0x3f] as char);
-        encoded.push(ALPHABET[(value >> 12) as usize & 0x3f] as char);
-        if chunk.len() > 1 {
-            encoded.push(ALPHABET[(value >> 6) as usize & 0x3f] as char);
-        }
-        if chunk.len() > 2 {
-            encoded.push(ALPHABET[value as usize & 0x3f] as char);
-        }
-    }
-    encoded
-}
-
 fn required_text(value: &Value, name: &str, maximum: usize) -> Result<String, Denied> {
     value
         .get(name)
@@ -399,6 +376,25 @@ fn client() -> Result<Client, Denied> {
         .timeout(Duration::from_secs(25))
         .build()
         .map_err(|_| Denied)
+}
+
+fn base64url(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let value = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        encoded.push(ALPHABET[(value >> 18) as usize & 0x3f] as char);
+        encoded.push(ALPHABET[(value >> 12) as usize & 0x3f] as char);
+        if chunk.len() > 1 {
+            encoded.push(ALPHABET[(value >> 6) as usize & 0x3f] as char);
+        }
+        if chunk.len() > 2 {
+            encoded.push(ALPHABET[value as usize & 0x3f] as char);
+        }
+    }
+    encoded
 }
 
 /// System-browser handoff for the UI host; the URL is always the pinned origin.
@@ -452,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn callback_requires_the_exact_state_path_and_microsoft_parameters() {
+    fn callback_requires_the_exact_state_path_and_parameters() {
         let ok = "/callback?code=abc&state=expected&session_state=session";
         let callback = parse_callback(ok, "expected").unwrap();
         assert_eq!(callback.code, "abc");
