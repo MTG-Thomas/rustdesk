@@ -12,6 +12,7 @@ const UNAVAILABLE: &str = "release configuration and issuer deployment are not i
 
 struct Setup {
     host: Option<Arc<Mutex<ProviderHost>>>,
+    technician_id: Option<String>,
     signing_in: bool,
     detail: String,
     fingerprint: Option<String>,
@@ -21,6 +22,7 @@ impl Setup {
     fn new() -> Self {
         Self {
             host: None,
+            technician_id: None,
             signing_in: false,
             detail: UNAVAILABLE.into(),
             fingerprint: None,
@@ -30,6 +32,7 @@ impl Setup {
     fn with_host(host: ProviderHost) -> Self {
         Self {
             host: Some(Arc::new(Mutex::new(host))),
+            technician_id: None,
             signing_in: false,
             detail: "signed out".into(),
             fingerprint: None,
@@ -42,26 +45,17 @@ impl Setup {
         }
         match &self.host {
             None => "unavailable",
-            Some(host) => match host.lock().map(|host| host.technician_id().is_some()) {
-                Ok(true) => "signed_in",
-                _ => "signed_out",
-            },
+            Some(_) if self.technician_id.is_some() => "signed_in",
+            Some(_) => "signed_out",
         }
     }
 
     fn status_json(&self) -> String {
         let state = self.state();
-        let technician = match &self.host {
-            Some(host) => host
-                .lock()
-                .ok()
-                .and_then(|host| host.technician_id().map(str::to_owned)),
-            None => None,
-        };
         let body = json!({
             "state": state,
             "detail": self.detail,
-            "technician_id": technician,
+            "technician_id": self.technician_id,
             "fingerprint": self.fingerprint,
         });
         body.to_string()
@@ -79,32 +73,45 @@ impl Setup {
         let status = self.status_json();
         // Never hold the setup lock while the blocking browser flow runs.
         std::thread::spawn(move || {
-            let result = match host.lock() {
-                Ok(mut host) => host.login(open_system_browser),
-                Err(_) => Err(Denied),
+            let (result, technician) = match host.lock() {
+                Ok(mut host) => {
+                    let result = host.login(open_system_browser);
+                    let technician = host.technician_id().map(str::to_owned);
+                    (result, technician)
+                }
+                Err(_) => (Err(Denied), None),
             };
             if let Ok(mut setup) = service().lock() {
                 setup.signing_in = false;
-                setup.detail = if setup.host.is_none() {
-                    "signed out".into()
-                } else if result.is_ok() {
-                    "signed in".into()
+                if setup.host.is_none() {
+                    setup.detail = "signed out".into();
+                } else if result.is_ok() && technician.is_some() {
+                    setup.technician_id = technician;
+                    setup.detail = "signed in".into();
                 } else {
-                    "sign-in failed or was cancelled".into()
-                };
+                    setup.detail = "sign-in failed or was cancelled".into();
+                }
             }
         });
         status
     }
 
     fn sign_out(&mut self) -> String {
-        if let Some(host) = self.host.as_ref() {
+        if self.signing_in {
+            // The worker holds the host lock; drop our reference instead of waiting.
+            self.host = None;
+        } else if let Some(host) = self.host.as_ref() {
             if let Ok(mut host) = host.lock() {
                 host.logout();
             }
-            self.detail = "signed out".into();
-            self.fingerprint = None;
         }
+        self.technician_id = None;
+        self.detail = if self.host.is_some() {
+            "signed out".into()
+        } else {
+            UNAVAILABLE.into()
+        };
+        self.fingerprint = None;
         self.signing_in = false;
         self.status_json()
     }
@@ -219,8 +226,12 @@ mod tests {
         let value: Value = serde_json::from_str(&setup.status_json()).unwrap();
         assert_eq!(value["state"], "signing_in");
         assert!(value["technician_id"].is_null());
+        setup.technician_id = Some("33333333-3333-4333-8333-333333333333".into());
+        setup.signing_in = false;
+        assert_eq!(state(&setup.status_json()).0, "signed_in");
         let value: Value = serde_json::from_str(&setup.sign_out()).unwrap();
         assert_eq!(value["state"], "signed_out");
+        assert!(value["technician_id"].is_null());
     }
 
     #[test]
