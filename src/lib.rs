@@ -54,6 +54,10 @@ mod quick_support_workstation;
 mod quick_support_enrollment;
 #[cfg(feature = "quick-support-child")]
 mod quick_support_provider_http;
+// Source-only host boundary; setup UI wiring is the next reviewed slice.
+#[cfg(feature = "quick-support-child")]
+#[allow(dead_code)]
+mod quick_support_provider_session;
 #[cfg(feature = "quick-support-child")]
 mod quick_support_key_store;
 #[cfg(feature = "quick-support-child")]
