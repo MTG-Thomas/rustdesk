@@ -172,3 +172,26 @@ Remaining programs, in dependency order:
   enrollment modules; 26 tests pass (5 setup-specific), clippy `-D warnings`
   clean. No OAuth flow, network call, credential, deployment or device was
   exercised.
+
+### Setup page and FFI adapter (source-only, 2026-11-05)
+
+- `flutter/lib/common/quick_support_setup.dart` parses the four FFI status
+  strings into a fail-closed UI model: only documented states are accepted,
+  identity appears only for `signed_in`/`enrolled`, and a fingerprint only for
+  `enrolled`. Malformed or unknown input degrades to `unavailable`; it never
+  fabricates identity, a fingerprint or approval. `newQuickSupportRequestId`
+  produces the request id the page retains across an uncertain enrollment call.
+- `flutter/lib/desktop/pages/quick_support_setup_page.dart` shows status and
+  sign-in/sign-out/enroll actions. Buttons are disabled unless the reported state
+  allows them. In this build sign-in reports that the worker is not wired and
+  enrollment refuses, so no success state is reachable.
+- The About settings tab links to the page. No route or startup behavior beyond
+  that link changes.
+- Generated FRB bindings are **not** hand-edited. After the pinned generator is
+  available, regenerate with:
+  `flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart --c-output ./flutter/macos/Runner/bridge_generated.h`
+  then run `flutter pub get`, `flutter analyze` and
+  `flutter test test/quick_support_setup_test.dart`.
+- The Flutter/Dart toolchain is absent here, so the page, route and adapter test
+  are source-reviewed only. The offline Rust harness covers the setup contract;
+  Dart analysis, codegen and widget build remain verification gaps.
