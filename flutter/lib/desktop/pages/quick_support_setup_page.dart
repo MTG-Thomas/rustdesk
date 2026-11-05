@@ -4,7 +4,20 @@ import 'package:flutter_hbb/common/quick_support_setup.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 
 class QuickSupportSetupPage extends StatefulWidget {
-  const QuickSupportSetupPage({Key? key}) : super(key: key);
+  final Future<String> Function()? loadStatus;
+  final Future<String> Function()? signIn;
+  final Future<String> Function()? signOut;
+  final Future<String> Function(String requestId)? enroll;
+  final String Function(String name)? translateText;
+
+  const QuickSupportSetupPage({
+    Key? key,
+    this.loadStatus,
+    this.signIn,
+    this.signOut,
+    this.enroll,
+    this.translateText,
+  }) : super(key: key);
 
   @override
   State<QuickSupportSetupPage> createState() => _QuickSupportSetupPageState();
@@ -20,18 +33,25 @@ class _QuickSupportSetupPageState extends State<QuickSupportSetupPage> {
     _refresh();
   }
 
-  Future<void> _refresh() => _run(() => bind.quickSupportSetupStatus());
+  Future<void> _refresh() =>
+      _run(widget.loadStatus ?? () => bind.quickSupportSetupStatus());
 
-  Future<void> _signIn() => _run(() => bind.quickSupportSetupSignIn());
+  Future<void> _signIn() =>
+      _run(widget.signIn ?? () => bind.quickSupportSetupSignIn());
 
-  Future<void> _signOut() => _run(() => bind.quickSupportSetupSignOut());
+  Future<void> _signOut() =>
+      _run(widget.signOut ?? () => bind.quickSupportSetupSignOut());
 
   Future<void> _enroll() {
     // Retain the request id across the call; uncertain results must be
     // reconciled rather than retried under a new id.
     final requestId = newQuickSupportRequestId();
-    return _run(() => bind.quickSupportSetupEnroll(requestId: requestId));
+    final enroll =
+        widget.enroll ?? (id) => bind.quickSupportSetupEnroll(requestId: id);
+    return _run(() => enroll(requestId));
   }
+
+  String _translate(String name) => (widget.translateText ?? translate)(name);
 
   Future<void> _run(Future<String> Function() action) async {
     if (_busy) {
@@ -57,7 +77,7 @@ class _QuickSupportSetupPageState extends State<QuickSupportSetupPage> {
   Widget build(BuildContext context) {
     final status = _status;
     return Scaffold(
-      appBar: AppBar(title: Text(translate('Quick Support'))),
+      appBar: AppBar(title: Text(_translate('Quick Support'))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -68,7 +88,7 @@ class _QuickSupportSetupPageState extends State<QuickSupportSetupPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    translate(status.isUnavailable
+                    _translate(status.isUnavailable
                         ? 'Unavailable'
                         : status.isSignedOut
                             ? 'Signed out'
@@ -80,12 +100,12 @@ class _QuickSupportSetupPageState extends State<QuickSupportSetupPage> {
                   if (status.technicianId != null) ...[
                     const SizedBox(height: 8),
                     SelectableText(
-                        '${translate('Technician')}: ${status.technicianId}'),
+                        '${_translate('Technician')}: ${status.technicianId}'),
                   ],
                   if (status.fingerprint != null) ...[
                     const SizedBox(height: 8),
                     SelectableText(
-                        '${translate('Workstation fingerprint')}: ${status.fingerprint}'),
+                        '${_translate('Workstation fingerprint')}: ${status.fingerprint}'),
                   ],
                 ],
               ),
@@ -98,26 +118,26 @@ class _QuickSupportSetupPageState extends State<QuickSupportSetupPage> {
             children: [
               FilledButton(
                 onPressed: _busy || !status.canSignIn ? null : () => _signIn(),
-                child: Text(translate('Sign in')),
+                child: Text(_translate('Sign in')),
               ),
               OutlinedButton(
                 onPressed:
                     _busy || !status.canSignOut ? null : () => _signOut(),
-                child: Text(translate('Sign out')),
+                child: Text(_translate('Sign out')),
               ),
               FilledButton(
                 onPressed: _busy || !status.canEnroll ? null : () => _enroll(),
-                child: Text(translate('Enroll this workstation')),
+                child: Text(_translate('Enroll this workstation')),
               ),
               TextButton(
                 onPressed: _busy ? null : _refresh,
-                child: Text(translate('Refresh')),
+                child: Text(_translate('Refresh')),
               ),
             ],
           ),
           const SizedBox(height: 16),
           Text(
-            translate(
+            _translate(
                 'Quick Support setup is unavailable until release configuration and the issuer are installed.'),
             style: Theme.of(context).textTheme.bodySmall,
           ),
