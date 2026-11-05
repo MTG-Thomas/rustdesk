@@ -100,27 +100,36 @@ wiring, and never relax the guard's HTTPS issuer check. Until rotation exists, a
 replacement key needs a new request id.
 
 `ProviderHost` is the source-only desktop sign-in boundary. It pins the HTTPS
-Provider origin and workflow UUID from release configuration, runs the platform's
-existing native loopback PKCE contract (`/auth/cli/start`, localhost callback,
-`/auth/cli/token`, then `/auth/me`), keeps the bearer in memory only, and exposes
-an opaque per-login context that changes on every login. `Debug` never prints the
+Provider origin and workflow UUID from release configuration, then runs the
+platform's Microsoft SSO flow in the system browser: GET
+`/auth/oauth/init/microsoft?redirect_uri=http://localhost:<port>/callback`, open
+the returned Microsoft authorization URL, receive `code`/`state` on the loopback
+callback, POST them to `/auth/oauth/callback`, and read the technician from
+`/auth/me`. PKCE stays server-side in Bifrost. The authorization URL is confined
+to `login.microsoftonline.com`; callback parameters are limited to `code`,
+`state` and Microsoft's opaque `session_state`. The host keeps the bearer in
+memory only and exposes an opaque per-login context that changes on every login. `Debug` never prints the
 bearer. The loopback login is blocking and must run on a worker thread, not the
 UI or async runtime thread. There is no token persistence or refresh yet, so an
 expired session requires a new login. The setup UI, startup route and platform
 confirmation that the CLI OAuth contract is the desktop contract remain
 unwired; the module is retained as source-only until that reviewed slice.
-Tests cover origin/workflow pinning, the PKCE challenge vector, callback
-state/parameter validation, authorization-URL origin confinement, bearer
-redaction and bounded token/user fields. No live OAuth, browser, Provider
+Tests cover origin/workflow pinning, callback state/parameter validation,
+Microsoft authorization-URL confinement, bearer redaction and bounded
+token/user fields. The Entra app registration must allow the loopback redirect,
+and Bifrost must have Microsoft SSO configured for the target install; neither is
+verified here. No live OAuth, browser, Provider
 credential or deployment was exercised.
 
 ## Decisions and remaining programs (2026-11-05)
 
-- **Desktop sign-in contract:** the desktop may use the platform's existing
-  native loopback PKCE contract (`/auth/cli/start`, localhost callback,
-  `/auth/cli/token`, `/auth/me`) for the pilot. This introduces no separate
-  native client registration; the authorization page stays platform-hosted.
-  Revisit if the platform adds client identity or an allowlist.
+- **Desktop sign-in contract:** the desktop uses Bifrost's Microsoft Entra SSO
+  through the system browser and a localhost loopback callback. Microsoft hosts
+  the account/consent page; the client never sees the user's password. The Entra
+  app must register the loopback redirect, and technicians must already be
+  provisioned into the provider organization; SSO alone does not grant the
+  Quick Support role. Keep the CLI loopback flow only as a fallback for
+  environments without SSO.
 - **Session policy:** the bearer is in memory only. The pilot has no token
   persistence and no refresh; expiry requires a new login. Protected storage and
   refresh are a later decision, not an assumed capability.

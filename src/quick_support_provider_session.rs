@@ -14,7 +14,6 @@ use reqwest::{
     Url,
 };
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
@@ -25,6 +24,8 @@ use uuid::Uuid;
 
 const CALLBACK_PATH: &str = "/callback";
 const START_TIMEOUT: u64 = 300;
+const SSO_PROVIDER: &str = "microsoft";
+const SSO_HOST: &str = "login.microsoftonline.com";
 const REQUEST_LIMIT: usize = 8192;
 
 /// Release-pinned Provider coordinates. Never invitation, URL or user-setting input.
@@ -152,44 +153,34 @@ fn oauth_login(
 ) -> Result<ProviderLogin, Denied> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|_| Denied)?;
     let port = listener.local_addr().map_err(|_| Denied)?.port();
-    let redirect_uri = format!("http://127.0.0.1:{port}{CALLBACK_PATH}");
-    let state = Uuid::new_v4().simple().to_string();
-    let verifier = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-    let challenge = base64url(&Sha256::digest(verifier.as_bytes()));
+    // Microsoft treats loopback redirects as localhost regardless of port.
+    let redirect_uri = format!("http://localhost:{port}{CALLBACK_PATH}");
     let client = client()?;
 
+    let mut init = origin
+        .join(&format!("/auth/oauth/init/{SSO_PROVIDER}"))
+        .map_err(|_| Denied)?;
+    init.query_pairs_mut()
+        .append_pair("redirect_uri", &redirect_uri);
     let start: Value = client
-        .post(origin.join("/auth/cli/start").map_err(|_| Denied)?)
-        .json(&json!({
-            "redirect_uri": redirect_uri,
-            "state": state,
-            "code_challenge": challenge,
-            "code_challenge_method": "S256",
-        }))
+        .get(init)
         .send()
         .map_err(|_| Denied)?
         .error_for_status()
         .map_err(|_| Denied)?
         .json()
         .map_err(|_| Denied)?;
-
-    let authorization = authorization_url(origin, &start)?;
+    let (authorization, state) = authorization_url(origin, &start)?;
     open_browser(&authorization)?;
-    let expires = start
-        .get("expires_in")
-        .and_then(Value::as_u64)
-        .unwrap_or(START_TIMEOUT)
-        .clamp(1, START_TIMEOUT);
-    let deadline = Instant::now() + Duration::from_secs(expires);
-    let (transaction_id, code) = callback(listener, &state, deadline)?;
+    let deadline = Instant::now() + Duration::from_secs(START_TIMEOUT);
+    let code = callback(listener, &state, deadline)?;
 
     let token: Value = client
-        .post(origin.join("/auth/cli/token").map_err(|_| Denied)?)
+        .post(origin.join("/auth/oauth/callback").map_err(|_| Denied)?)
         .json(&json!({
-            "transaction_id": transaction_id,
+            "provider": SSO_PROVIDER,
             "code": code,
             "state": state,
-            "code_verifier": verifier,
         }))
         .send()
         .map_err(|_| Denied)?
@@ -219,11 +210,7 @@ fn oauth_login(
     })
 }
 
-fn callback(
-    listener: TcpListener,
-    state: &str,
-    deadline: Instant,
-) -> Result<(String, String), Denied> {
+fn callback(listener: TcpListener, state: &str, deadline: Instant) -> Result<String, Denied> {
     listener.set_nonblocking(true).map_err(|_| Denied)?;
     loop {
         match listener.accept() {
@@ -239,11 +226,7 @@ fn callback(
     }
 }
 
-fn respond(
-    mut stream: TcpStream,
-    state: &str,
-    deadline: Instant,
-) -> Result<(String, String), Denied> {
+fn respond(mut stream: TcpStream, state: &str, deadline: Instant) -> Result<String, Denied> {
     let mut request = Vec::with_capacity(1024);
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -276,7 +259,7 @@ fn respond(
     if parts.next().is_none() || parts.next().is_some() {
         return Err(Denied);
     }
-    let (transaction_id, code) = parse_callback(target, state)?;
+    let code = parse_callback(target, state)?;
     let body = b"Quick Support sign-in received. You can close this window.";
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -285,10 +268,10 @@ fn respond(
     stream.write_all(response.as_bytes()).map_err(|_| Denied)?;
     stream.write_all(body).map_err(|_| Denied)?;
     stream.flush().map_err(|_| Denied)?;
-    Ok((transaction_id, code))
+    Ok(code)
 }
 
-fn parse_callback(target: &str, expected_state: &str) -> Result<(String, String), Denied> {
+fn parse_callback(target: &str, expected_state: &str) -> Result<String, Denied> {
     if target.len() > 2048 {
         return Err(Denied);
     }
@@ -298,37 +281,50 @@ fn parse_callback(target: &str, expected_state: &str) -> Result<(String, String)
     }
     let mut code = None;
     let mut state = None;
-    let mut transaction_id = None;
     for (name, value) in url.query_pairs() {
-        let slot = match name.as_ref() {
-            "code" => &mut code,
-            "state" => &mut state,
-            "transaction_id" => &mut transaction_id,
+        match name.as_ref() {
+            "code" => {
+                if code.is_some() || value.is_empty() || value.len() > 4096 {
+                    return Err(Denied);
+                }
+                code = Some(value.into_owned());
+            }
+            "state" => {
+                if state.is_some() || value.is_empty() || value.len() > 512 {
+                    return Err(Denied);
+                }
+                state = Some(value.into_owned());
+            }
+            // Microsoft returns this opaque session value; it is not authority here.
+            "session_state" => {
+                if value.len() > 512 {
+                    return Err(Denied);
+                }
+            }
+            "error" | "error_description" => return Err(Denied),
             _ => return Err(Denied),
-        };
-        if slot.is_some() || value.is_empty() || value.len() > 512 {
-            return Err(Denied);
         }
-        *slot = Some(value.into_owned());
     }
     if state.as_deref() != Some(expected_state) {
         return Err(Denied);
     }
-    Ok((transaction_id.ok_or(Denied)?, code.ok_or(Denied)?))
+    code.ok_or(Denied)
 }
 
-fn authorization_url(origin: &Url, start: &Value) -> Result<Url, Denied> {
-    let relative = required_text(start, "authorization_url", 4096)?;
-    let url = origin.join(&relative).map_err(|_| Denied)?;
+fn authorization_url(origin: &Url, start: &Value) -> Result<(Url, String), Denied> {
+    let raw = required_text(start, "authorization_url", 4096)?;
+    let url = Url::parse(&raw)
+        .or_else(|_| origin.join(&raw))
+        .map_err(|_| Denied)?;
     if url.scheme() != "https"
-        || url.host_str() != origin.host_str()
-        || url.port_or_known_default() != origin.port_or_known_default()
+        || url.host_str() != Some(SSO_HOST)
         || !url.username().is_empty()
         || url.password().is_some()
     {
         return Err(Denied);
     }
-    Ok(url)
+    let state = required_text(start, "state", 512)?;
+    Ok((url, state))
 }
 
 fn required_text(value: &Value, name: &str, maximum: usize) -> Result<String, Denied> {
@@ -349,25 +345,6 @@ fn client() -> Result<Client, Denied> {
         .timeout(Duration::from_secs(25))
         .build()
         .map_err(|_| Denied)
-}
-
-fn base64url(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let value = (u32::from(chunk[0]) << 16)
-            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
-            | u32::from(*chunk.get(2).unwrap_or(&0));
-        encoded.push(ALPHABET[(value >> 18) as usize & 0x3f] as char);
-        encoded.push(ALPHABET[(value >> 12) as usize & 0x3f] as char);
-        if chunk.len() > 1 {
-            encoded.push(ALPHABET[(value >> 6) as usize & 0x3f] as char);
-        }
-        if chunk.len() > 2 {
-            encoded.push(ALPHABET[value as usize & 0x3f] as char);
-        }
-    }
-    encoded
 }
 
 /// System-browser handoff for the UI host; the URL is always the pinned origin.
@@ -421,51 +398,44 @@ mod tests {
     }
 
     #[test]
-    fn pkce_challenge_matches_the_known_vector() {
-        assert_eq!(
-            base64url(&Sha256::digest(
-                b"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
-            )),
-            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
-        );
-    }
-
-    #[test]
-    fn callback_requires_the_exact_state_path_and_known_parameters() {
-        let ok = "/callback?code=abc&state=expected&transaction_id=tx";
-        assert_eq!(
-            parse_callback(ok, "expected").unwrap(),
-            ("tx".into(), "abc".into())
-        );
+    fn callback_requires_the_exact_state_path_and_microsoft_parameters() {
+        let ok = "/callback?code=abc&state=expected&session_state=session";
+        assert_eq!(parse_callback(ok, "expected").unwrap(), "abc");
         for target in [
-            "/other?code=abc&state=expected&transaction_id=tx",
-            "/callback?code=abc&state=wrong&transaction_id=tx",
-            "/callback?code=abc&state=expected",
-            "/callback?transaction_id=tx",
-            "/callback?code=abc&state=expected&transaction_id=tx&extra=1",
-            "/callback?code=abc&code=def&state=expected&transaction_id=tx",
-            "/callback?code=&state=expected&transaction_id=tx",
-            "https://evil.example/callback?code=abc&state=expected&transaction_id=tx",
+            "/other?code=abc&state=expected",
+            "/callback?code=abc&state=wrong",
+            "/callback?code=abc",
+            "/callback?state=expected",
+            "/callback?code=&state=expected",
+            "/callback?code=abc&code=def&state=expected",
+            "/callback?code=abc&state=expected&error=access_denied",
+            "/callback?code=abc&state=expected&error_description=denied",
+            "/callback?code=abc&state=expected&extra=1",
+            "https://evil.example/callback?code=abc&state=expected",
         ] {
             assert!(parse_callback(target, "expected").is_err(), "{target}");
         }
     }
 
     #[test]
-    fn authorization_url_must_stay_on_the_pinned_origin() {
+    fn authorization_url_must_be_the_pinned_identity_provider() {
         let origin = config().origin;
-        let start = json!({"authorization_url": "/auth/cli/authorize?x=1"});
-        assert_eq!(
-            authorization_url(&origin, &start).unwrap().as_str(),
-            "https://provider.example.test/auth/cli/authorize?x=1"
-        );
+        let start = json!({
+            "authorization_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=x",
+            "state": "expected",
+        });
+        let (url, state) = authorization_url(&origin, &start).unwrap();
+        assert_eq!(state, "expected");
+        assert_eq!(url.host_str(), Some("login.microsoftonline.com"));
         for value in [
-            json!({"authorization_url": "https://evil.example/auth"}),
-            json!({"authorization_url": "http://provider.example.test/auth"}),
-            json!({"authorization_url": "//evil.example/auth"}),
-            json!({"authorization_url": ""}),
+            json!({"authorization_url": "https://evil.example/auth", "state": "s"}),
+            json!({"authorization_url": "http://login.microsoftonline.com/auth", "state": "s"}),
+            json!({"authorization_url": "https://user:pass@login.microsoftonline.com/auth", "state": "s"}),
+            json!({"authorization_url": "/auth/oauth/authorize", "state": "s"}),
+            json!({"authorization_url": "https://login.microsoftonline.com/auth"}),
+            json!({"authorization_url": "", "state": "s"}),
         ] {
-            assert!(authorization_url(&origin, &value).is_err());
+            assert!(authorization_url(&origin, &value).is_err(), "{value}");
         }
     }
 
