@@ -106,8 +106,10 @@ platform's Microsoft SSO flow in the system browser: GET
 the returned Microsoft authorization URL, receive `code`/`state` on the loopback
 callback, POST them to `/auth/oauth/callback`, and read the technician from
 `/auth/me`. PKCE stays server-side in Bifrost. The authorization URL is confined
-to `login.microsoftonline.com`; callback parameters are limited to `code`,
-`state` and Microsoft's opaque `session_state`. The host keeps the bearer in
+to the identity-provider hosts pinned in release configuration (Microsoft by
+default; Google or a generic Bifrost OIDC provider can be selected with their own
+hosts). Callback parameters require `code`/`state`; other bounded provider
+parameters are ignored and provider errors are rejected. The host keeps the bearer in
 memory only and exposes an opaque per-login context that changes on every login. `Debug` never prints the
 bearer. The loopback login is blocking and must run on a worker thread, not the
 UI or async runtime thread. There is no token persistence or refresh yet, so an

@@ -32,10 +32,23 @@ const REQUEST_LIMIT: usize = 8192;
 pub(crate) struct ProviderConfig {
     origin: Url,
     workflow_id: String,
+    sso_provider: String,
+    sso_hosts: Vec<String>,
 }
 
 impl ProviderConfig {
+    /// Microsoft Entra ID is the default; other Bifrost SSO providers must pin
+    /// their own authorization hosts in signed configuration.
     pub fn new(origin: &str, workflow_id: &str) -> Result<Self, Denied> {
+        Self::with_sso(origin, workflow_id, SSO_PROVIDER, &[SSO_HOST])
+    }
+
+    pub fn with_sso(
+        origin: &str,
+        workflow_id: &str,
+        provider: &str,
+        hosts: &[&str],
+    ) -> Result<Self, Denied> {
         let origin = Url::parse(origin).map_err(|_| Denied)?;
         if origin.scheme() != "https"
             || origin.host_str().is_none()
@@ -45,12 +58,21 @@ impl ProviderConfig {
             || origin.fragment().is_some()
             || origin.path() != "/"
             || Uuid::parse_str(workflow_id).is_err()
+            || provider.is_empty()
+            || provider.len() > 32
+            || !provider
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            || hosts.is_empty()
+            || hosts.iter().any(|host| !qualified_host(host))
         {
             return Err(Denied);
         }
         Ok(Self {
             origin,
             workflow_id: workflow_id.into(),
+            sso_provider: provider.into(),
+            sso_hosts: hosts.iter().map(|host| (*host).to_owned()).collect(),
         })
     }
 
@@ -120,7 +142,7 @@ impl ProviderHost {
         &mut self,
         open_browser: impl FnOnce(&Url) -> Result<(), Denied>,
     ) -> Result<(), Denied> {
-        let login = oauth_login(&self.config.origin, open_browser);
+        let login = oauth_login(&self.config, open_browser);
         self.replace_login(login)
     }
 
@@ -148,9 +170,10 @@ impl ProviderHost {
 }
 
 fn oauth_login(
-    origin: &Url,
+    config: &ProviderConfig,
     open_browser: impl FnOnce(&Url) -> Result<(), Denied>,
 ) -> Result<ProviderLogin, Denied> {
+    let origin = &config.origin;
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|_| Denied)?;
     let port = listener.local_addr().map_err(|_| Denied)?.port();
     // Microsoft treats loopback redirects as localhost regardless of port.
@@ -158,7 +181,7 @@ fn oauth_login(
     let client = client()?;
 
     let mut init = origin
-        .join(&format!("/auth/oauth/init/{SSO_PROVIDER}"))
+        .join(&format!("/auth/oauth/init/{}", config.sso_provider))
         .map_err(|_| Denied)?;
     init.query_pairs_mut()
         .append_pair("redirect_uri", &redirect_uri);
@@ -170,7 +193,7 @@ fn oauth_login(
         .map_err(|_| Denied)?
         .json()
         .map_err(|_| Denied)?;
-    let (authorization, state) = authorization_url(origin, &start)?;
+    let (authorization, state) = authorization_url(origin, &start, &config.sso_hosts)?;
     open_browser(&authorization)?;
     let deadline = Instant::now() + Duration::from_secs(START_TIMEOUT);
     let code = callback(listener, &state, deadline)?;
@@ -178,7 +201,7 @@ fn oauth_login(
     let token: Value = client
         .post(origin.join("/auth/oauth/callback").map_err(|_| Denied)?)
         .json(&json!({
-            "provider": SSO_PROVIDER,
+            "provider": config.sso_provider,
             "code": code,
             "state": state,
         }))
@@ -302,7 +325,13 @@ fn parse_callback(target: &str, expected_state: &str) -> Result<String, Denied> 
                 }
             }
             "error" | "error_description" => return Err(Denied),
-            _ => return Err(Denied),
+            _ => {
+                // Providers may echo extra response parameters; they are bounded
+                // and carry no authority beyond the validated code/state.
+                if value.len() > 512 {
+                    return Err(Denied);
+                }
+            }
         }
     }
     if state.as_deref() != Some(expected_state) {
@@ -311,13 +340,20 @@ fn parse_callback(target: &str, expected_state: &str) -> Result<String, Denied> 
     code.ok_or(Denied)
 }
 
-fn authorization_url(origin: &Url, start: &Value) -> Result<(Url, String), Denied> {
+fn authorization_url(
+    origin: &Url,
+    start: &Value,
+    allowed_hosts: &[String],
+) -> Result<(Url, String), Denied> {
     let raw = required_text(start, "authorization_url", 4096)?;
     let url = Url::parse(&raw)
         .or_else(|_| origin.join(&raw))
         .map_err(|_| Denied)?;
+    let host = url.host_str().ok_or(Denied)?;
     if url.scheme() != "https"
-        || url.host_str() != Some(SSO_HOST)
+        || !allowed_hosts
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(host))
         || !url.username().is_empty()
         || url.password().is_some()
     {
@@ -325,6 +361,16 @@ fn authorization_url(origin: &Url, start: &Value) -> Result<(Url, String), Denie
     }
     let state = required_text(start, "state", 512)?;
     Ok((url, state))
+}
+
+fn qualified_host(host: &str) -> bool {
+    !host.is_empty()
+        && host.len() <= 253
+        && !host.starts_with('.')
+        && !host.ends_with('.')
+        && host
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-')
 }
 
 fn required_text(value: &Value, name: &str, maximum: usize) -> Result<String, Denied> {
@@ -384,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn config_refuses_untrusted_origin_and_workflow_inputs() {
+    fn config_refuses_untrusted_origin_workflow_and_sso_inputs() {
         for origin in [
             "http://provider.example.test",
             "https://user:pass@provider.example.test/",
@@ -395,12 +441,46 @@ mod tests {
             assert!(ProviderConfig::new(origin, WORKFLOW).is_err(), "{origin}");
         }
         assert!(ProviderConfig::new("https://provider.example.test", "workflow").is_err());
+        for (provider, hosts) in [
+            ("", vec!["login.microsoftonline.com"]),
+            ("Microsoft", vec!["login.microsoftonline.com"]),
+            ("microsoft", vec![]),
+            ("microsoft", vec!["/evil"]),
+            ("microsoft", vec!["evil.example/path"]),
+            ("microsoft", vec![""]),
+        ] {
+            assert!(
+                ProviderConfig::with_sso(
+                    "https://provider.example.test",
+                    WORKFLOW,
+                    provider,
+                    &hosts
+                )
+                .is_err(),
+                "{provider} {hosts:?}"
+            );
+        }
+        assert!(ProviderConfig::with_sso(
+            "https://provider.example.test",
+            WORKFLOW,
+            "google",
+            &["accounts.google.com"]
+        )
+        .is_ok());
     }
 
     #[test]
     fn callback_requires_the_exact_state_path_and_microsoft_parameters() {
         let ok = "/callback?code=abc&state=expected&session_state=session";
         assert_eq!(parse_callback(ok, "expected").unwrap(), "abc");
+        assert_eq!(
+            parse_callback(
+                "/callback?code=abc&state=expected&scope=openid&authuser=0",
+                "expected"
+            )
+            .unwrap(),
+            "abc"
+        );
         for target in [
             "/other?code=abc&state=expected",
             "/callback?code=abc&state=wrong",
@@ -410,7 +490,6 @@ mod tests {
             "/callback?code=abc&code=def&state=expected",
             "/callback?code=abc&state=expected&error=access_denied",
             "/callback?code=abc&state=expected&error_description=denied",
-            "/callback?code=abc&state=expected&extra=1",
             "https://evil.example/callback?code=abc&state=expected",
         ] {
             assert!(parse_callback(target, "expected").is_err(), "{target}");
@@ -424,9 +503,17 @@ mod tests {
             "authorization_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=x",
             "state": "expected",
         });
-        let (url, state) = authorization_url(&origin, &start).unwrap();
+        let microsoft = vec!["login.microsoftonline.com".into()];
+        let (url, state) = authorization_url(&origin, &start, &microsoft).unwrap();
         assert_eq!(state, "expected");
         assert_eq!(url.host_str(), Some("login.microsoftonline.com"));
+        let google = vec!["accounts.google.com".into()];
+        let google_start = json!({
+            "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?client_id=x",
+            "state": "expected",
+        });
+        assert!(authorization_url(&origin, &google_start, &google).is_ok());
+        assert!(authorization_url(&origin, &google_start, &microsoft).is_err());
         for value in [
             json!({"authorization_url": "https://evil.example/auth", "state": "s"}),
             json!({"authorization_url": "http://login.microsoftonline.com/auth", "state": "s"}),
@@ -435,7 +522,10 @@ mod tests {
             json!({"authorization_url": "https://login.microsoftonline.com/auth"}),
             json!({"authorization_url": "", "state": "s"}),
         ] {
-            assert!(authorization_url(&origin, &value).is_err(), "{value}");
+            assert!(
+                authorization_url(&origin, &value, &microsoft).is_err(),
+                "{value}"
+            );
         }
     }
 
