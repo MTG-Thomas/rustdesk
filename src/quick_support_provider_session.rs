@@ -204,16 +204,12 @@ fn bifrost_login(
         .map_err(|_| Denied)?
         .json()
         .map_err(|_| Denied)?;
-    finish_login(&config.origin, &client, token)
-}
-
-fn finish_login(origin: &Url, client: &Client, token: Value) -> Result<ProviderLogin, Denied> {
     let bearer = required_text(&token, "access_token", 4096)?;
     let mut authorization =
         HeaderValue::from_str(&format!("Bearer {bearer}")).map_err(|_| Denied)?;
     authorization.set_sensitive(true);
     let me: Value = client
-        .get(origin.join("/auth/me").map_err(|_| Denied)?)
+        .get(config.origin.join("/auth/me").map_err(|_| Denied)?)
         .header(AUTHORIZATION, authorization)
         .send()
         .map_err(|_| Denied)?
