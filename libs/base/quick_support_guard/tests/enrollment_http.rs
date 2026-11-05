@@ -46,6 +46,43 @@ fn attempt() -> (EnrollmentAttempt, Value, WorkstationKey) {
 }
 
 #[test]
+fn equivalent_technician_spelling_is_accepted_on_the_http_completion_path() {
+    let (attempt, result, _) = attempt();
+    let braced = json!({
+        "technician_id": format!("{{{TECHNICIAN}}}"),
+        "fingerprint": result["fingerprint"].clone(),
+        "enrolled_at": result["enrolled_at"].clone(),
+    });
+    let receipt = attempt
+        .complete(REQUEST, "synthetic-auth-session", &braced)
+        .unwrap();
+    assert_eq!(receipt.technician_id, TECHNICIAN);
+}
+
+#[test]
+fn equivalent_technician_identifier_spellings_bind_the_same_receipt() {
+    let (_, result, key) = attempt();
+    let receipt = quick_support_workstation::EnrollmentReceipt {
+        technician_id: TECHNICIAN.into(),
+        fingerprint: result["fingerprint"].as_str().unwrap().into(),
+    };
+    let enrolled = quick_support_workstation::EnrolledWorkstation::enroll(
+        key,
+        &format!("{{{TECHNICIAN}}}"),
+        REQUEST,
+        |request, _| {
+            assert_eq!(request, REQUEST);
+            Ok(receipt)
+        },
+    )
+    .unwrap();
+    let login = enrolled
+        .login("receiver".into(), "synthetic-grant".into())
+        .unwrap();
+    assert!(login.authentication("receiver", &"x".repeat(32)).is_ok());
+}
+
+#[test]
 fn provider_request_retains_id_and_public_key_without_auth_or_private_material() {
     let (attempt, result, key) = attempt();
     let request = attempt.request(WORKFLOW).unwrap();
