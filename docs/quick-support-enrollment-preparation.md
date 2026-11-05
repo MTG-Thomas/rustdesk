@@ -113,3 +113,41 @@ Tests cover origin/workflow pinning, the PKCE challenge vector, callback
 state/parameter validation, authorization-URL origin confinement, bearer
 redaction and bounded token/user fields. No live OAuth, browser, Provider
 credential or deployment was exercised.
+
+## Decisions and remaining programs (2026-11-05)
+
+- **Desktop sign-in contract:** the desktop may use the platform's existing
+  native loopback PKCE contract (`/auth/cli/start`, localhost callback,
+  `/auth/cli/token`, `/auth/me`) for the pilot. This introduces no separate
+  native client registration; the authorization page stays platform-hosted.
+  Revisit if the platform adds client identity or an allowlist.
+- **Session policy:** the bearer is in memory only. The pilot has no token
+  persistence and no refresh; expiry requires a new login. Protected storage and
+  refresh are a later decision, not an assumed capability.
+- **Issuer identity:** the session/transport authority keeps its UUID internally.
+  The receiver-facing `iss` must be one explicitly pinned HTTPS URL plus a pinned
+  Ed25519 public key. Do not pass the bare authority UUID as `iss`, and do not
+  relax the guard's HTTPS requirement to accommodate it.
+- **Registration lifecycle:** receipts require an active, non-revoked row.
+  Revocation and rotation remain a separate workflow; until it exists, a
+  replacement key needs a new request id.
+
+Remaining programs, in dependency order:
+
+1. **Setup UI and startup wiring.** Expose the sign-in/enrollment host through
+   the application UI and an isolated authenticated startup path. Not started;
+   this is the next source slice.
+2. **Issuer, bootstrap and grant.** No reviewed issuer exists in the inspected
+   authority bundle, and the production signing key requires owner custody and a
+   deployment. The authority UUID to HTTPS issuer mapping above is the
+   prerequisite.
+3. **Dependency audit.** Open PR #52 lowers the retained cached audit from 13 to
+   11 vulnerability entries and leaves 29 warnings. Its one failing check is the
+   i686 Sciter lane: the updated lock requires newer Rust/edition support than
+   that lane's pinned compiler (high confidence from MSRV metadata; the failing
+   log was not re-read). Either re-tool/retire that lane or waive the two
+   advisories; neither clears the remaining 11/29. This is an owner tradeoff and
+   is not claimed as a cleared gate.
+4. **Device acceptance.** The Windows technician host LT002-H8WL8H4 is
+   unreachable, and no two-device consent/control/cleanup run has been recorded.
+   Named devices and accounts remain owner-supplied.
