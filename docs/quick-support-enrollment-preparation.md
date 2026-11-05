@@ -100,27 +100,40 @@ wiring, and never relax the guard's HTTPS issuer check. Until rotation exists, a
 replacement key needs a new request id.
 
 `ProviderHost` is the source-only desktop sign-in boundary. It pins the HTTPS
-Provider origin and workflow UUID from release configuration, runs the platform's
-existing native loopback PKCE contract (`/auth/cli/start`, localhost callback,
-`/auth/cli/token`, then `/auth/me`), keeps the bearer in memory only, and exposes
-an opaque per-login context that changes on every login. `Debug` never prints the
+Provider origin and workflow UUID from release configuration. By default it runs
+Bifrost's own login page in the system browser through the native CLI loopback
+contract (`/auth/cli/start`, localhost callback, `/auth/cli/token`, `/auth/me`);
+that page covers password, MFA, passkeys and any configured SSO, so other
+Bifrost auth providers and OIDC configurations are reached through the same
+entry. The CLI flow keeps PKCE in the desktop client (verifier generated
+locally, challenge submitted, verifier redeemed); any upstream OAuth PKCE stays
+server-side in Bifrost. The authorization URL is confined to
+the pinned origin; callback parameters require `code`, `state` and the CLI
+transaction id, while bounded extras are ignored and provider errors are
+rejected. Direct native `/auth/oauth/*` SSO is deferred: advertising `localhost`
+while binding only `127.0.0.1` lets another local process claim the IPv6 callback
+and redeem the code. Revisit it only with matching dual-stack callback ownership
+or client-held proof at redemption. The host keeps the bearer in memory only and
+exposes an opaque per-login context that changes on every login. `Debug` never prints the
 bearer. The loopback login is blocking and must run on a worker thread, not the
 UI or async runtime thread. There is no token persistence or refresh yet, so an
 expired session requires a new login. The setup UI, startup route and platform
 confirmation that the CLI OAuth contract is the desktop contract remain
 unwired; the module is retained as source-only until that reviewed slice.
-Tests cover origin/workflow pinning, the PKCE challenge vector, callback
-state/parameter validation, authorization-URL origin confinement, bearer
-redaction and bounded token/user fields. No live OAuth, browser, Provider
+Tests cover origin/workflow pinning, callback state/parameter validation,
+authorization-URL origin confinement, bearer redaction and bounded token/user
+fields. No loopback interceptor, live login, passkey, browser, Provider
 credential or deployment was exercised.
 
 ## Decisions and remaining programs (2026-11-05)
 
-- **Desktop sign-in contract:** the desktop may use the platform's existing
-  native loopback PKCE contract (`/auth/cli/start`, localhost callback,
-  `/auth/cli/token`, `/auth/me`) for the pilot. This introduces no separate
-  native client registration; the authorization page stays platform-hosted.
-  Revisit if the platform adds client identity or an allowlist.
+- **Desktop sign-in contract:** the desktop uses the Bifrost login page through
+  the system browser and a localhost loopback callback by default, so password,
+  MFA, passkeys and any configured SSO/OIDC provider all work without native
+  WebAuthn. The client never sees the user's password. Technicians must already
+  be provisioned into the provider organization, because authentication alone
+  does not grant the Quick Support role. Direct native OAuth is deferred until
+  callback ownership or client-held proof is defined.
 - **Session policy:** the bearer is in memory only. The pilot has no token
   persistence and no refresh; expiry requires a new login. Protected storage and
   refresh are a later decision, not an assumed capability.
@@ -151,3 +164,49 @@ Remaining programs, in dependency order:
 4. **Device acceptance.** The Windows technician host LT002-H8WL8H4 is
    unreachable, and no two-device consent/control/cleanup run has been recorded.
    Named devices and accounts remain owner-supplied.
+
+## Setup surface and private launch gate (source-only, 2026-11-05)
+
+- `quick_support_setup` exposes `status`, `sign_in`, `sign_out` and `enroll` as
+  JSON strings for the Flutter FFI (`quick_support_setup_status`,
+  `quick_support_setup_sign_in`, `quick_support_setup_sign_out`,
+  `quick_support_setup_enroll`). The contract is fail-closed: without an
+  installed release configuration it reports `unavailable`; with configuration
+  the sign-in worker runs the browser SSO flow and reports `signing_in` until it
+  completes. Enrollment still refuses in this build and never fabricates a
+  fingerprint. The bearer is never serialized. Trusted configuration
+  installation is not wired yet, so the normal state remains `unavailable`.
+- A private invocation now routes through
+  `quick_support_startup::private_launch()`, which always refuses until signed
+  release configuration, parent verification and the issuer exist. Ordinary
+  startup paths are unchanged; there is no fallback from private to ordinary.
+- Offline proof: the source harness compiles the setup contract with the host and
+  enrollment modules; 28 tests pass (7 setup-specific), clippy `-D warnings`
+  clean. No OAuth flow, network call, credential, deployment or device was
+  exercised.
+
+### Setup page and FFI adapter (source-only, 2026-11-05)
+
+- `flutter/lib/common/quick_support_setup.dart` parses the four FFI status
+  strings into a fail-closed UI model: only documented states are accepted,
+  identity appears only for `signed_in`/`enrolled`, and a fingerprint only for
+  `enrolled`. Malformed or unknown input degrades to `unavailable`; it never
+  fabricates identity, a fingerprint or approval. `newQuickSupportRequestId`
+  produces the request id the page retains across an uncertain enrollment call.
+- `flutter/lib/desktop/pages/quick_support_setup_page.dart` shows status and
+  sign-in/sign-out/enroll actions. Buttons are disabled unless the reported state
+  allows them. In this build sign-in cannot start without trusted configuration
+  and enrollment refuses, so no success state is reachable.
+- The About settings tab links to the page. No route or startup behavior beyond
+  that link changes.
+- Generated FRB bindings are **not** hand-edited. After the pinned generator is
+  available, regenerate with:
+  `flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart --c-output ./flutter/macos/Runner/bridge_generated.h --llvm-path /usr/lib/llvm-19`
+  (ffigen needs the LLVM directory containing `libclang.so`), copy the header to
+  `flutter/ios/Runner/bridge_generated.h`, then run `flutter pub get`, `flutter analyze` and
+  `flutter test test/quick_support_setup_test.dart`.
+- Flutter 3.24.5/Dart 3.5.4 and the pinned FRB codegen were installed here; codegen
+  completed, analysis is clean on the changed Dart files, and 11 Dart tests pass
+  (7 adapter/model, 4 widget). The full application build was not run: its Linux
+  toolchain is missing the `gstreamer`/`libxdo` development packages. Live login,
+  passkey, browser and device behavior remain unverified.

@@ -31,7 +31,10 @@ macro_rules! my_println{
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn core_main() -> Option<Vec<String>> {
     if crate::quick_support_startup::is_private_launch(std::env::args_os().skip(1)) {
-        return None;
+        log::warn!(
+            "Quick Support private launch refused: signed configuration and issuer are not installed"
+        );
+        return crate::quick_support_startup::private_launch();
     }
     if !crate::common::global_init() {
         return None;

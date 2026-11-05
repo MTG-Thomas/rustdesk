@@ -58,6 +58,10 @@ mod quick_support_provider_http;
 #[cfg(feature = "quick-support-child")]
 #[allow(dead_code)]
 mod quick_support_provider_session;
+// Fail-closed setup contract used by the Flutter FFI and the private launch gate.
+#[cfg(feature = "quick-support-child")]
+#[allow(dead_code)]
+mod quick_support_setup;
 #[cfg(feature = "quick-support-child")]
 mod quick_support_key_store;
 #[cfg(feature = "quick-support-child")]
