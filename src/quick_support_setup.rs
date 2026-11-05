@@ -85,6 +85,14 @@ impl Setup {
                 Err(_) => (Err(Denied), None),
             };
             if let Ok(mut setup) = service().lock() {
+                // Ignore a completion from a host that has since been replaced.
+                if !setup
+                    .host
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &host))
+                {
+                    return;
+                }
                 setup.signing_in = false;
                 if setup.host.is_none() {
                     setup.detail = "signed out".into();

@@ -6,9 +6,6 @@
 /// to ordinary startup while those prerequisites are missing.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) fn private_launch() -> Option<Vec<String>> {
-    log::warn!(
-        "Quick Support private launch refused: signed configuration and issuer are not installed"
-    );
     None
 }
 pub(crate) fn is_private_launch(

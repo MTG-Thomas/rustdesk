@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/quick_support_setup.dart';
-import 'package:flutter_hbb/models/platform_model.dart';
+import 'package:flutter_hbb/common/quick_support_setup_ffi.dart';
 
 class QuickSupportSetupPage extends StatefulWidget {
   final Future<String> Function()? loadStatus;
@@ -35,24 +35,23 @@ class _QuickSupportSetupPageState extends State<QuickSupportSetupPage> {
   }
 
   Future<void> _refresh() =>
-      _run(widget.loadStatus ?? () => bind.quickSupportSetupStatus());
+      _run(widget.loadStatus ?? () => quickSupportSetupStatus());
 
   Future<void> _signIn() {
     _pendingRequestId = null;
-    return _run(widget.signIn ?? () => bind.quickSupportSetupSignIn());
+    return _run(widget.signIn ?? () => quickSupportSetupSignIn());
   }
 
   Future<void> _signOut() {
     _pendingRequestId = null;
-    return _run(widget.signOut ?? () => bind.quickSupportSetupSignOut());
+    return _run(widget.signOut ?? () => quickSupportSetupSignOut());
   }
 
   Future<void> _enroll() {
     // Retain the request id across the call; uncertain results must be
     // reconciled rather than retried under a new id.
     final requestId = _pendingRequestId ??= newQuickSupportRequestId();
-    final enroll =
-        widget.enroll ?? (id) => bind.quickSupportSetupEnroll(requestId: id);
+    final enroll = widget.enroll ?? (id) => quickSupportSetupEnroll(id);
     return _run(() => enroll(requestId)).then((_) {
       if (_status.isEnrolled) {
         _pendingRequestId = null;

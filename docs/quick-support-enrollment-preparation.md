@@ -179,7 +179,7 @@ Remaining programs, in dependency order:
   release configuration, parent verification and the issuer exist. Ordinary
   startup paths are unchanged; there is no fallback from private to ordinary.
 - Offline proof: the source harness compiles the setup contract with the host and
-  enrollment modules; 26 tests pass (5 setup-specific), clippy `-D warnings`
+  enrollment modules; 28 tests pass (7 setup-specific), clippy `-D warnings`
   clean. No OAuth flow, network call, credential, deployment or device was
   exercised.
 
@@ -203,6 +203,8 @@ Remaining programs, in dependency order:
   (ffigen needs the LLVM directory containing `libclang.so`), copy the header to
   `flutter/ios/Runner/bridge_generated.h`, then run `flutter pub get`, `flutter analyze` and
   `flutter test test/quick_support_setup_test.dart`.
-- The Flutter/Dart toolchain is absent here, so the page, route and adapter test
-  are source-reviewed only. The offline Rust harness covers the setup contract;
-  Dart analysis, codegen and widget build remain verification gaps.
+- Flutter 3.24.5/Dart 3.5.4 and the pinned FRB codegen were installed here; codegen
+  completed, analysis is clean on the changed Dart files, and 11 Dart tests pass
+  (7 adapter/model, 4 widget). The full application build was not run: its Linux
+  toolchain is missing the `gstreamer`/`libxdo` development packages. Live login,
+  passkey, browser and device behavior remain unverified.
