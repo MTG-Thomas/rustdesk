@@ -98,3 +98,18 @@ the receipt. The authority's internal issuer UUID and the receiver's HTTPS issue
 identity are distinct: define one explicit mapping and pinned Ed25519 key before
 wiring, and never relax the guard's HTTPS issuer check. Until rotation exists, a
 replacement key needs a new request id.
+
+`ProviderHost` is the source-only desktop sign-in boundary. It pins the HTTPS
+Provider origin and workflow UUID from release configuration, runs the platform's
+existing native loopback PKCE contract (`/auth/cli/start`, localhost callback,
+`/auth/cli/token`, then `/auth/me`), keeps the bearer in memory only, and exposes
+an opaque per-login context that changes on every login. `Debug` never prints the
+bearer. The loopback login is blocking and must run on a worker thread, not the
+UI or async runtime thread. There is no token persistence or refresh yet, so an
+expired session requires a new login. The setup UI, startup route and platform
+confirmation that the CLI OAuth contract is the desktop contract remain
+unwired; the module is retained as source-only until that reviewed slice.
+Tests cover origin/workflow pinning, the PKCE challenge vector, callback
+state/parameter validation, authorization-URL origin confinement, bearer
+redaction and bounded token/user fields. No live OAuth, browser, Provider
+credential or deployment was exercised.
