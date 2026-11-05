@@ -87,3 +87,14 @@ RustDesk account tokens and Provider HMAC secrets are not substitutes. Do not
 connect this API to private startup with synthetic callbacks or infer eligibility
 from a populated session struct. UI integration must also clear earlier pending
 signers on logout/context change and preserve receiver-local consent separately.
+
+An enrollment receipt is client-local evidence for one setup attempt, not
+authority. Any issuer or transport path must read the active registration
+server-side, including status/revocation and the exact organization, technician
+and key row, and must never accept a client receipt as proof. The registration
+record is keyed by organization and technician; the pilot install is treated as
+single-organization, so a future multi-organization use must add that scope to
+the receipt. The authority's internal issuer UUID and the receiver's HTTPS issuer
+identity are distinct: define one explicit mapping and pinned Ed25519 key before
+wiring, and never relax the guard's HTTPS issuer check. Until rotation exists, a
+replacement key needs a new request id.
