@@ -14,6 +14,7 @@ use reqwest::{
     Url,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
@@ -32,32 +33,38 @@ const REQUEST_LIMIT: usize = 8192;
 pub(crate) struct ProviderConfig {
     origin: Url,
     workflow_id: String,
-    sso_provider: String,
-    sso_hosts: Vec<String>,
+    sso: Option<SsoConfig>,
+}
+
+struct SsoConfig {
+    provider: String,
+    hosts: Vec<String>,
 }
 
 impl ProviderConfig {
-    /// Microsoft Entra ID is the default; other Bifrost SSO providers must pin
-    /// their own authorization hosts in signed configuration.
+    /// Bifrost's own login page by default: password, MFA, passkeys and any
+    /// configured SSO, all through the system browser and a loopback callback.
     pub fn new(origin: &str, workflow_id: &str) -> Result<Self, Denied> {
-        Self::with_sso(origin, workflow_id, SSO_PROVIDER, &[SSO_HOST])
+        if Uuid::parse_str(workflow_id).is_err() {
+            return Err(Denied);
+        }
+        Ok(Self {
+            origin: provider_origin(origin)?,
+            workflow_id: workflow_id.into(),
+            sso: None,
+        })
     }
 
+    /// Direct provider SSO when the installation prefers transparent account
+    /// pass-through. The provider and its authorization hosts stay pinned.
     pub fn with_sso(
         origin: &str,
         workflow_id: &str,
         provider: &str,
         hosts: &[&str],
     ) -> Result<Self, Denied> {
-        let origin = Url::parse(origin).map_err(|_| Denied)?;
-        if origin.scheme() != "https"
-            || origin.host_str().is_none()
-            || !origin.username().is_empty()
-            || origin.password().is_some()
-            || origin.query().is_some()
-            || origin.fragment().is_some()
-            || origin.path() != "/"
-            || Uuid::parse_str(workflow_id).is_err()
+        let origin = provider_origin(origin)?;
+        if Uuid::parse_str(workflow_id).is_err()
             || provider.is_empty()
             || provider.len() > 32
             || !provider
@@ -71,14 +78,31 @@ impl ProviderConfig {
         Ok(Self {
             origin,
             workflow_id: workflow_id.into(),
-            sso_provider: provider.into(),
-            sso_hosts: hosts.iter().map(|host| (*host).to_owned()).collect(),
+            sso: Some(SsoConfig {
+                provider: provider.into(),
+                hosts: hosts.iter().map(|host| (*host).to_owned()).collect(),
+            }),
         })
     }
 
     fn enrollment(&self) -> Result<ProviderEnrollmentHttp, Denied> {
         ProviderEnrollmentHttp::new(self.origin.as_str(), &self.workflow_id)
     }
+}
+
+fn provider_origin(origin: &str) -> Result<Url, Denied> {
+    let origin = Url::parse(origin).map_err(|_| Denied)?;
+    if origin.scheme() != "https"
+        || origin.host_str().is_none()
+        || !origin.username().is_empty()
+        || origin.password().is_some()
+        || origin.query().is_some()
+        || origin.fragment().is_some()
+        || origin.path() != "/"
+    {
+        return Err(Denied);
+    }
+    Ok(origin)
 }
 
 /// One in-memory Provider login. The bearer never leaves this value except into a
@@ -142,7 +166,7 @@ impl ProviderHost {
         &mut self,
         open_browser: impl FnOnce(&Url) -> Result<(), Denied>,
     ) -> Result<(), Denied> {
-        let login = oauth_login(&self.config, open_browser);
+        let login = login(&self.config, open_browser);
         self.replace_login(login)
     }
 
@@ -169,19 +193,87 @@ impl ProviderHost {
     }
 }
 
-fn oauth_login(
+fn login(
     config: &ProviderConfig,
     open_browser: impl FnOnce(&Url) -> Result<(), Denied>,
 ) -> Result<ProviderLogin, Denied> {
-    let origin = &config.origin;
+    match &config.sso {
+        Some(sso) => oauth_login(config, &sso.provider, &sso.hosts, open_browser),
+        None => bifrost_login(config, open_browser),
+    }
+}
+
+fn bifrost_login(
+    config: &ProviderConfig,
+    open_browser: impl FnOnce(&Url) -> Result<(), Denied>,
+) -> Result<ProviderLogin, Denied> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|_| Denied)?;
     let port = listener.local_addr().map_err(|_| Denied)?.port();
-    // Microsoft treats loopback redirects as localhost regardless of port.
+    let redirect_uri = format!("http://127.0.0.1:{port}{CALLBACK_PATH}");
+    let state = Uuid::new_v4().simple().to_string();
+    let verifier = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let challenge = base64url(&Sha256::digest(verifier.as_bytes()));
+    let client = client()?;
+
+    let start: Value = client
+        .post(config.origin.join("/auth/cli/start").map_err(|_| Denied)?)
+        .json(&json!({
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+        }))
+        .send()
+        .map_err(|_| Denied)?
+        .error_for_status()
+        .map_err(|_| Denied)?
+        .json()
+        .map_err(|_| Denied)?;
+    let authorization = origin_authorization_url(&config.origin, &start)?;
+    open_browser(&authorization)?;
+    let expires = start
+        .get("expires_in")
+        .and_then(Value::as_u64)
+        .unwrap_or(START_TIMEOUT)
+        .clamp(1, START_TIMEOUT);
+    let callback = callback(
+        listener,
+        &state,
+        Instant::now() + Duration::from_secs(expires),
+    )?;
+    let transaction_id = callback.transaction_id.ok_or(Denied)?;
+
+    let token: Value = client
+        .post(config.origin.join("/auth/cli/token").map_err(|_| Denied)?)
+        .json(&json!({
+            "transaction_id": transaction_id,
+            "code": callback.code,
+            "state": state,
+            "code_verifier": verifier,
+        }))
+        .send()
+        .map_err(|_| Denied)?
+        .error_for_status()
+        .map_err(|_| Denied)?
+        .json()
+        .map_err(|_| Denied)?;
+    finish_login(&config.origin, &client, token)
+}
+
+fn oauth_login(
+    config: &ProviderConfig,
+    provider: &str,
+    hosts: &[String],
+    open_browser: impl FnOnce(&Url) -> Result<(), Denied>,
+) -> Result<ProviderLogin, Denied> {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|_| Denied)?;
+    let port = listener.local_addr().map_err(|_| Denied)?.port();
     let redirect_uri = format!("http://localhost:{port}{CALLBACK_PATH}");
     let client = client()?;
 
-    let mut init = origin
-        .join(&format!("/auth/oauth/init/{}", config.sso_provider))
+    let mut init = config
+        .origin
+        .join(&format!("/auth/oauth/init/{provider}"))
         .map_err(|_| Denied)?;
     init.query_pairs_mut()
         .append_pair("redirect_uri", &redirect_uri);
@@ -193,16 +285,27 @@ fn oauth_login(
         .map_err(|_| Denied)?
         .json()
         .map_err(|_| Denied)?;
-    let (authorization, state) = authorization_url(origin, &start, &config.sso_hosts)?;
+    let (authorization, state) = idp_authorization_url(&config.origin, &start, hosts)?;
     open_browser(&authorization)?;
-    let deadline = Instant::now() + Duration::from_secs(START_TIMEOUT);
-    let code = callback(listener, &state, deadline)?;
+    let callback = callback(
+        listener,
+        &state,
+        Instant::now() + Duration::from_secs(START_TIMEOUT),
+    )?;
+    if callback.transaction_id.is_some() {
+        return Err(Denied);
+    }
 
     let token: Value = client
-        .post(origin.join("/auth/oauth/callback").map_err(|_| Denied)?)
+        .post(
+            config
+                .origin
+                .join("/auth/oauth/callback")
+                .map_err(|_| Denied)?,
+        )
         .json(&json!({
-            "provider": config.sso_provider,
-            "code": code,
+            "provider": provider,
+            "code": callback.code,
             "state": state,
         }))
         .send()
@@ -211,6 +314,10 @@ fn oauth_login(
         .map_err(|_| Denied)?
         .json()
         .map_err(|_| Denied)?;
+    finish_login(&config.origin, &client, token)
+}
+
+fn finish_login(origin: &Url, client: &Client, token: Value) -> Result<ProviderLogin, Denied> {
     let bearer = required_text(&token, "access_token", 4096)?;
     let mut authorization =
         HeaderValue::from_str(&format!("Bearer {bearer}")).map_err(|_| Denied)?;
@@ -233,7 +340,12 @@ fn oauth_login(
     })
 }
 
-fn callback(listener: TcpListener, state: &str, deadline: Instant) -> Result<String, Denied> {
+struct Callback {
+    code: String,
+    transaction_id: Option<String>,
+}
+
+fn callback(listener: TcpListener, state: &str, deadline: Instant) -> Result<Callback, Denied> {
     listener.set_nonblocking(true).map_err(|_| Denied)?;
     loop {
         match listener.accept() {
@@ -249,7 +361,7 @@ fn callback(listener: TcpListener, state: &str, deadline: Instant) -> Result<Str
     }
 }
 
-fn respond(mut stream: TcpStream, state: &str, deadline: Instant) -> Result<String, Denied> {
+fn respond(mut stream: TcpStream, state: &str, deadline: Instant) -> Result<Callback, Denied> {
     let mut request = Vec::with_capacity(1024);
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -282,7 +394,7 @@ fn respond(mut stream: TcpStream, state: &str, deadline: Instant) -> Result<Stri
     if parts.next().is_none() || parts.next().is_some() {
         return Err(Denied);
     }
-    let code = parse_callback(target, state)?;
+    let callback = parse_callback(target, state)?;
     let body = b"Quick Support sign-in received. You can close this window.";
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -291,10 +403,10 @@ fn respond(mut stream: TcpStream, state: &str, deadline: Instant) -> Result<Stri
     stream.write_all(response.as_bytes()).map_err(|_| Denied)?;
     stream.write_all(body).map_err(|_| Denied)?;
     stream.flush().map_err(|_| Denied)?;
-    Ok(code)
+    Ok(callback)
 }
 
-fn parse_callback(target: &str, expected_state: &str) -> Result<String, Denied> {
+fn parse_callback(target: &str, expected_state: &str) -> Result<Callback, Denied> {
     if target.len() > 2048 {
         return Err(Denied);
     }
@@ -304,6 +416,7 @@ fn parse_callback(target: &str, expected_state: &str) -> Result<String, Denied> 
     }
     let mut code = None;
     let mut state = None;
+    let mut transaction_id = None;
     for (name, value) in url.query_pairs() {
         match name.as_ref() {
             "code" => {
@@ -318,16 +431,14 @@ fn parse_callback(target: &str, expected_state: &str) -> Result<String, Denied> 
                 }
                 state = Some(value.into_owned());
             }
-            // Microsoft returns this opaque session value; it is not authority here.
-            "session_state" => {
-                if value.len() > 512 {
+            "transaction_id" => {
+                if transaction_id.is_some() || value.is_empty() || value.len() > 512 {
                     return Err(Denied);
                 }
+                transaction_id = Some(value.into_owned());
             }
             "error" | "error_description" => return Err(Denied),
             _ => {
-                // Providers may echo extra response parameters; they are bounded
-                // and carry no authority beyond the validated code/state.
                 if value.len() > 512 {
                     return Err(Denied);
                 }
@@ -337,10 +448,27 @@ fn parse_callback(target: &str, expected_state: &str) -> Result<String, Denied> 
     if state.as_deref() != Some(expected_state) {
         return Err(Denied);
     }
-    code.ok_or(Denied)
+    Ok(Callback {
+        code: code.ok_or(Denied)?,
+        transaction_id,
+    })
 }
 
-fn authorization_url(
+fn origin_authorization_url(origin: &Url, start: &Value) -> Result<Url, Denied> {
+    let raw = required_text(start, "authorization_url", 4096)?;
+    let url = origin.join(&raw).map_err(|_| Denied)?;
+    if url.scheme() != "https"
+        || url.host_str() != origin.host_str()
+        || url.port_or_known_default() != origin.port_or_known_default()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(Denied);
+    }
+    Ok(url)
+}
+
+fn idp_authorization_url(
     origin: &Url,
     start: &Value,
     allowed_hosts: &[String],
@@ -371,6 +499,25 @@ fn qualified_host(host: &str) -> bool {
         && host
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-')
+}
+
+fn base64url(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let value = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        encoded.push(ALPHABET[(value >> 18) as usize & 0x3f] as char);
+        encoded.push(ALPHABET[(value >> 12) as usize & 0x3f] as char);
+        if chunk.len() > 1 {
+            encoded.push(ALPHABET[(value >> 6) as usize & 0x3f] as char);
+        }
+        if chunk.len() > 2 {
+            encoded.push(ALPHABET[value as usize & 0x3f] as char);
+        }
+    }
+    encoded
 }
 
 fn required_text(value: &Value, name: &str, maximum: usize) -> Result<String, Denied> {
@@ -472,13 +619,22 @@ mod tests {
     #[test]
     fn callback_requires_the_exact_state_path_and_microsoft_parameters() {
         let ok = "/callback?code=abc&state=expected&session_state=session";
-        assert_eq!(parse_callback(ok, "expected").unwrap(), "abc");
+        let callback = parse_callback(ok, "expected").unwrap();
+        assert_eq!(callback.code, "abc");
+        assert!(callback.transaction_id.is_none());
+        let cli = parse_callback(
+            "/callback?code=abc&state=expected&transaction_id=tx",
+            "expected",
+        )
+        .unwrap();
+        assert_eq!(cli.transaction_id.as_deref(), Some("tx"));
         assert_eq!(
             parse_callback(
                 "/callback?code=abc&state=expected&scope=openid&authuser=0",
                 "expected"
             )
-            .unwrap(),
+            .unwrap()
+            .code,
             "abc"
         );
         for target in [
@@ -504,7 +660,7 @@ mod tests {
             "state": "expected",
         });
         let microsoft = vec!["login.microsoftonline.com".into()];
-        let (url, state) = authorization_url(&origin, &start, &microsoft).unwrap();
+        let (url, state) = idp_authorization_url(&origin, &start, &microsoft).unwrap();
         assert_eq!(state, "expected");
         assert_eq!(url.host_str(), Some("login.microsoftonline.com"));
         let google = vec!["accounts.google.com".into()];
@@ -512,8 +668,8 @@ mod tests {
             "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?client_id=x",
             "state": "expected",
         });
-        assert!(authorization_url(&origin, &google_start, &google).is_ok());
-        assert!(authorization_url(&origin, &google_start, &microsoft).is_err());
+        assert!(idp_authorization_url(&origin, &google_start, &google).is_ok());
+        assert!(idp_authorization_url(&origin, &google_start, &microsoft).is_err());
         for value in [
             json!({"authorization_url": "https://evil.example/auth", "state": "s"}),
             json!({"authorization_url": "http://login.microsoftonline.com/auth", "state": "s"}),
@@ -523,10 +679,35 @@ mod tests {
             json!({"authorization_url": "", "state": "s"}),
         ] {
             assert!(
-                authorization_url(&origin, &value, &microsoft).is_err(),
+                idp_authorization_url(&origin, &value, &microsoft).is_err(),
                 "{value}"
             );
         }
+    }
+
+    #[test]
+    fn bifrost_authorization_stays_on_the_pinned_origin() {
+        let origin = config().origin;
+        let start = json!({"authorization_url": "/auth/cli/authorize?transaction_id=tx"});
+        let url = origin_authorization_url(&origin, &start).unwrap();
+        assert_eq!(url.host_str(), Some("provider.example.test"));
+        for value in [
+            json!({"authorization_url": "https://evil.example/auth"}),
+            json!({"authorization_url": "http://provider.example.test/auth"}),
+            json!({"authorization_url": ""}),
+        ] {
+            assert!(origin_authorization_url(&origin, &value).is_err());
+        }
+    }
+
+    #[test]
+    fn pkce_challenge_matches_the_known_vector() {
+        assert_eq!(
+            base64url(&Sha256::digest(
+                b"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+            )),
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        );
     }
 
     #[test]
