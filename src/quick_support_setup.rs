@@ -3,15 +3,16 @@
 //! issuer/deployment prerequisites are not installed, so sign-in and enrollment
 //! report that state and never claim success.
 
-use crate::quick_support_provider_session::{ProviderConfig, ProviderHost};
+use crate::quick_support_provider_session::{open_system_browser, ProviderConfig, ProviderHost};
 use quick_support_guard::Denied;
 use serde_json::{json, Value};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 const UNAVAILABLE: &str = "release configuration and issuer deployment are not installed";
 
 struct Setup {
-    host: Option<ProviderHost>,
+    host: Option<Arc<Mutex<ProviderHost>>>,
+    signing_in: bool,
     detail: String,
     fingerprint: Option<String>,
 }
@@ -20,6 +21,7 @@ impl Setup {
     fn new() -> Self {
         Self {
             host: None,
+            signing_in: false,
             detail: UNAVAILABLE.into(),
             fingerprint: None,
         }
@@ -27,53 +29,88 @@ impl Setup {
 
     fn with_host(host: ProviderHost) -> Self {
         Self {
-            host: Some(host),
+            host: Some(Arc::new(Mutex::new(host))),
+            signing_in: false,
             detail: "signed out".into(),
             fingerprint: None,
         }
     }
 
     fn state(&self) -> &'static str {
+        if self.signing_in {
+            return "signing_in";
+        }
         match &self.host {
             None => "unavailable",
-            Some(host) if host.technician_id().is_some() => "signed_in",
-            Some(_) => "signed_out",
+            Some(host) => match host.lock().map(|host| host.technician_id().is_some()) {
+                Ok(true) => "signed_in",
+                _ => "signed_out",
+            },
         }
     }
 
     fn status_json(&self) -> String {
         let state = self.state();
+        let technician = match &self.host {
+            Some(host) => host
+                .lock()
+                .ok()
+                .and_then(|host| host.technician_id().map(str::to_owned)),
+            None => None,
+        };
         let body = json!({
             "state": state,
             "detail": self.detail,
-            "technician_id": self.host.as_ref().and_then(ProviderHost::technician_id),
+            "technician_id": technician,
             "fingerprint": self.fingerprint,
         });
         body.to_string()
     }
 
     fn sign_in(&mut self) -> String {
-        // The interactive worker and trusted configuration installation are not
-        // wired in this build; never fabricate a login.
-        self.detail = if self.host.is_some() {
-            "interactive sign-in is not wired in this build".into()
-        } else {
-            UNAVAILABLE.into()
+        let Some(host) = self.host.clone() else {
+            self.detail = UNAVAILABLE.into();
+            return self.status_json();
         };
-        self.status_json()
+        if !self.signing_in {
+            self.signing_in = true;
+            self.detail = "waiting for browser sign-in".into();
+        }
+        let status = self.status_json();
+        // Never hold the setup lock while the blocking browser flow runs.
+        std::thread::spawn(move || {
+            let result = match host.lock() {
+                Ok(mut host) => host.login(open_system_browser),
+                Err(_) => Err(Denied),
+            };
+            if let Ok(mut setup) = service().lock() {
+                setup.signing_in = false;
+                setup.detail = if setup.host.is_none() {
+                    "signed out".into()
+                } else if result.is_ok() {
+                    "signed in".into()
+                } else {
+                    "sign-in failed or was cancelled".into()
+                };
+            }
+        });
+        status
     }
 
     fn sign_out(&mut self) -> String {
-        if let Some(host) = self.host.as_mut() {
-            host.logout();
+        if let Some(host) = self.host.as_ref() {
+            if let Ok(mut host) = host.lock() {
+                host.logout();
+            }
             self.detail = "signed out".into();
             self.fingerprint = None;
         }
+        self.signing_in = false;
         self.status_json()
     }
 
     fn enroll(&mut self, request_id: &str) -> String {
-        if request_id.is_empty() || self.host.is_none() || self.state() != "signed_in" {
+        if request_id.is_empty() || self.state() != "signed_in" {
             self.detail = "sign in with an installed release configuration before enrolling".into();
             return self.status_json();
         }
@@ -169,12 +206,21 @@ mod tests {
     }
 
     #[test]
-    fn installed_configuration_is_signed_out_until_sign_in_is_wired() {
-        let mut setup = Setup::with_host(host());
+    fn installed_configuration_is_signed_out_until_a_login_completes() {
+        let setup = Setup::with_host(host());
         assert_eq!(state(&setup.status_json()).0, "signed_out");
-        let (state_name, detail) = state(&setup.sign_in());
-        assert_eq!(state_name, "signed_out");
-        assert!(detail.contains("not wired"));
+        assert_eq!(state(&Setup::new().sign_in()).0, "unavailable");
+    }
+
+    #[test]
+    fn in_flight_sign_in_is_reported_and_logout_clears_it() {
+        let mut setup = Setup::with_host(host());
+        setup.signing_in = true;
+        let value: Value = serde_json::from_str(&setup.status_json()).unwrap();
+        assert_eq!(value["state"], "signing_in");
+        assert!(value["technician_id"].is_null());
+        let value: Value = serde_json::from_str(&setup.sign_out()).unwrap();
+        assert_eq!(value["state"], "signed_out");
     }
 
     #[test]

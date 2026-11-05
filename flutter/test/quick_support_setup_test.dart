@@ -18,6 +18,20 @@ void main() {
     expect(status.canEnroll, isFalse);
   });
 
+  test('signing in carries no identity and no fingerprint', () {
+    final status = QuickSupportSetupStatus.fromJson(jsonEncode({
+      'state': 'signing_in',
+      'detail': 'waiting for browser sign-in',
+      'technician_id': '33333333-3333-4333-8333-333333333333',
+      'fingerprint': 'deadbeef',
+    }));
+    expect(status.isSigningIn, isTrue);
+    expect(status.technicianId, isNull);
+    expect(status.fingerprint, isNull);
+    expect(status.canSignIn, isFalse);
+    expect(status.canEnroll, isFalse);
+  });
+
   test('signed in requires a technician and keeps no fingerprint', () {
     final status = QuickSupportSetupStatus.fromJson(jsonEncode({
       'state': 'signed_in',

@@ -8,6 +8,7 @@ const String quickSupportUnavailableDetail =
 const Set<String> _states = {
   'unavailable',
   'signed_out',
+  'signing_in',
   'signed_in',
   'enrolled',
 };
@@ -28,6 +29,7 @@ class QuickSupportSetupStatus {
   });
 
   bool get isUnavailable => state == 'unavailable';
+  bool get isSigningIn => state == 'signing_in';
   bool get isSignedOut => state == 'signed_out';
   bool get isSignedIn => state == 'signed_in' || state == 'enrolled';
   bool get canSignIn => isSignedOut;

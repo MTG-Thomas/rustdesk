@@ -90,9 +90,11 @@ class _QuickSupportSetupPageState extends State<QuickSupportSetupPage> {
                   Text(
                     _translate(status.isUnavailable
                         ? 'Unavailable'
-                        : status.isSignedOut
-                            ? 'Signed out'
-                            : 'Signed in'),
+                        : status.isSigningIn
+                            ? 'Signing in'
+                            : status.isSignedOut
+                                ? 'Signed out'
+                                : 'Signed in'),
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 8),

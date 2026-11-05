@@ -168,11 +168,10 @@ Remaining programs, in dependency order:
   `quick_support_setup_sign_in`, `quick_support_setup_sign_out`,
   `quick_support_setup_enroll`). The contract is fail-closed: without an
   installed release configuration it reports `unavailable`; with configuration
-  but no wired sign-in worker it stays `signed_out`; enrollment refuses and never
-  fabricates a fingerprint. The bearer is never serialized.
-- The Flutter page and route are not added in this slice because the local
-  environment has no Flutter/Dart toolchain or FRB codegen. The FFI functions are
-  the reviewable UI seam; a settings page can call them without new privilege.
+  the sign-in worker runs the browser SSO flow and reports `signing_in` until it
+  completes. Enrollment still refuses in this build and never fabricates a
+  fingerprint. The bearer is never serialized. Trusted configuration
+  installation is not wired yet, so the normal state remains `unavailable`.
 - A private invocation now routes through
   `quick_support_startup::private_launch()`, which always refuses until signed
   release configuration, parent verification and the issuer exist. Ordinary
@@ -192,8 +191,8 @@ Remaining programs, in dependency order:
   produces the request id the page retains across an uncertain enrollment call.
 - `flutter/lib/desktop/pages/quick_support_setup_page.dart` shows status and
   sign-in/sign-out/enroll actions. Buttons are disabled unless the reported state
-  allows them. In this build sign-in reports that the worker is not wired and
-  enrollment refuses, so no success state is reachable.
+  allows them. In this build sign-in cannot start without trusted configuration
+  and enrollment refuses, so no success state is reachable.
 - The About settings tab links to the page. No route or startup behavior beyond
   that link changes.
 - Generated FRB bindings are **not** hand-edited. After the pinned generator is
