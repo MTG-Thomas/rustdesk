@@ -119,8 +119,14 @@ impl ProviderHost {
         &mut self,
         open_browser: impl FnOnce(&Url) -> Result<(), Denied>,
     ) -> Result<(), Denied> {
-        let login = oauth_login(&self.config.origin, open_browser)?;
-        self.login = Some(login);
+        let login = oauth_login(&self.config.origin, open_browser);
+        self.replace_login(login)
+    }
+
+    fn replace_login(&mut self, login: Result<ProviderLogin, Denied>) -> Result<(), Denied> {
+        // A failed replacement must not leave the previous technician signed in.
+        self.login = None;
+        self.login = Some(login?);
         Ok(())
     }
 
@@ -174,7 +180,8 @@ fn oauth_login(
         .and_then(Value::as_u64)
         .unwrap_or(START_TIMEOUT)
         .clamp(1, START_TIMEOUT);
-    let (transaction_id, code) = callback(listener, &state, expires)?;
+    let deadline = Instant::now() + Duration::from_secs(expires);
+    let (transaction_id, code) = callback(listener, &state, deadline)?;
 
     let token: Value = client
         .post(origin.join("/auth/cli/token").map_err(|_| Denied)?)
@@ -212,12 +219,15 @@ fn oauth_login(
     })
 }
 
-fn callback(listener: TcpListener, state: &str, expires: u64) -> Result<(String, String), Denied> {
+fn callback(
+    listener: TcpListener,
+    state: &str,
+    deadline: Instant,
+) -> Result<(String, String), Denied> {
     listener.set_nonblocking(true).map_err(|_| Denied)?;
-    let deadline = Instant::now() + Duration::from_secs(expires);
     loop {
         match listener.accept() {
-            Ok((stream, _)) => return respond(stream, state),
+            Ok((stream, _)) => return respond(stream, state, deadline),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 if Instant::now() >= deadline {
                     return Err(Denied);
@@ -229,23 +239,31 @@ fn callback(listener: TcpListener, state: &str, expires: u64) -> Result<(String,
     }
 }
 
-fn respond(mut stream: TcpStream, state: &str) -> Result<(String, String), Denied> {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .map_err(|_| Denied)?;
+fn respond(
+    mut stream: TcpStream,
+    state: &str,
+    deadline: Instant,
+) -> Result<(String, String), Denied> {
     let mut request = Vec::with_capacity(1024);
     loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(Denied);
+        }
+        stream
+            .set_read_timeout(Some(remaining.min(Duration::from_secs(5))))
+            .map_err(|_| Denied)?;
         let mut chunk = [0u8; 1024];
         let read = stream.read(&mut chunk).map_err(|_| Denied)?;
         if read == 0 {
             return Err(Denied);
         }
         request.extend_from_slice(&chunk[..read]);
-        if request.windows(4).any(|window| window == b"\r\n\r\n") {
-            break;
-        }
         if request.len() > REQUEST_LIMIT {
             return Err(Denied);
+        }
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
         }
     }
     let request = std::str::from_utf8(&request).map_err(|_| Denied)?;
@@ -452,6 +470,50 @@ mod tests {
     }
 
     #[test]
+    fn failed_replacement_login_clears_the_previous_technician() {
+        let mut host = ProviderHost::new(config());
+        host.login = Some(ProviderLogin {
+            technician_id: "33333333-3333-4333-8333-333333333333".into(),
+            context: "context".into(),
+            bearer: "secret-bearer".into(),
+        });
+        assert!(host.replace_login(Err(Denied)).is_err());
+        assert!(host.technician_id().is_none());
+    }
+
+    #[test]
+    fn callback_rejects_an_oversized_or_slow_request_before_the_deadline_expires() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(address).unwrap();
+            let chunk = [b'A'; 1024];
+            while stream.write_all(&chunk).is_ok() {}
+        });
+        assert!(callback(listener, "state", Instant::now() + Duration::from_secs(5)).is_err());
+    }
+
+    #[test]
+    fn callback_total_deadline_bounds_a_dripping_sender() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(address).unwrap();
+            while stream.write_all(b"A").is_ok() {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+        let started = Instant::now();
+        assert!(callback(
+            listener,
+            "state",
+            Instant::now() + Duration::from_millis(300)
+        )
+        .is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
     fn login_state_redacts_the_bearer_and_logout_clears_it() {
         let mut host = ProviderHost::new(config());
         assert!(host.technician_id().is_none());
@@ -479,8 +541,11 @@ mod tests {
             json!({}),
             json!({"access_token": ""}),
             json!({"access_token": 7}),
+            json!({"access_token": "x".repeat(4097)}),
+            json!({"technician_id": "not-a-uuid"}),
         ] {
             assert!(required_text(&value, "access_token", 4096).is_err());
         }
+        assert!(required_text(&json!({"id": "x".repeat(37)}), "id", 36).is_err());
     }
 }
