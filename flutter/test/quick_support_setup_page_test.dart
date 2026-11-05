@@ -75,6 +75,37 @@ void main() {
     expect(find.text('Signed in'), findsNothing);
   });
 
+  testWidgets('uncertain enrollment keeps the request id for reconciliation',
+      (tester) async {
+    final ids = <String>[];
+    Future<String> load() async => status(
+          'signed_in',
+          technician: '33333333-3333-4333-8333-333333333333',
+        );
+    await tester.pumpWidget(page(
+      load: load,
+      enroll: (id) async {
+        ids.add(id);
+        throw Exception('uncertain');
+      },
+    ));
+    await tester.pumpAndSettle();
+
+    await tester
+        .tap(find.widgetWithText(FilledButton, 'Enroll this workstation'));
+    await tester.pumpAndSettle();
+    expect(find.text('Unavailable'), findsOneWidget);
+    expect(ids, hasLength(1));
+
+    await tester.tap(find.widgetWithText(TextButton, 'Refresh'));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.widgetWithText(FilledButton, 'Enroll this workstation'));
+    await tester.pumpAndSettle();
+    expect(ids, hasLength(2));
+    expect(ids[0], ids[1]);
+  });
+
   testWidgets('signed in shows identity and enables enrollment only then',
       (tester) async {
     await tester.pumpWidget(page(

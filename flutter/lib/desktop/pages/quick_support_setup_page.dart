@@ -25,6 +25,7 @@ class QuickSupportSetupPage extends StatefulWidget {
 
 class _QuickSupportSetupPageState extends State<QuickSupportSetupPage> {
   QuickSupportSetupStatus _status = QuickSupportSetupStatus.unavailable;
+  String? _pendingRequestId;
   bool _busy = false;
 
   @override
@@ -36,19 +37,27 @@ class _QuickSupportSetupPageState extends State<QuickSupportSetupPage> {
   Future<void> _refresh() =>
       _run(widget.loadStatus ?? () => bind.quickSupportSetupStatus());
 
-  Future<void> _signIn() =>
-      _run(widget.signIn ?? () => bind.quickSupportSetupSignIn());
+  Future<void> _signIn() {
+    _pendingRequestId = null;
+    return _run(widget.signIn ?? () => bind.quickSupportSetupSignIn());
+  }
 
-  Future<void> _signOut() =>
-      _run(widget.signOut ?? () => bind.quickSupportSetupSignOut());
+  Future<void> _signOut() {
+    _pendingRequestId = null;
+    return _run(widget.signOut ?? () => bind.quickSupportSetupSignOut());
+  }
 
   Future<void> _enroll() {
     // Retain the request id across the call; uncertain results must be
     // reconciled rather than retried under a new id.
-    final requestId = newQuickSupportRequestId();
+    final requestId = _pendingRequestId ??= newQuickSupportRequestId();
     final enroll =
         widget.enroll ?? (id) => bind.quickSupportSetupEnroll(requestId: id);
-    return _run(() => enroll(requestId));
+    return _run(() => enroll(requestId)).then((_) {
+      if (_status.isEnrolled) {
+        _pendingRequestId = null;
+      }
+    });
   }
 
   String _translate(String name) => (widget.translateText ?? translate)(name);

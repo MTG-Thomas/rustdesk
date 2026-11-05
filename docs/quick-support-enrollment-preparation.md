@@ -103,14 +103,15 @@ replacement key needs a new request id.
 Provider origin and workflow UUID from release configuration. By default it runs
 Bifrost's own login page in the system browser through the native CLI loopback
 contract (`/auth/cli/start`, localhost callback, `/auth/cli/token`, `/auth/me`);
-that page covers password, MFA, passkeys and any configured SSO. A release may
-instead pin direct provider SSO: `/auth/oauth/init/<provider>` with its
-authorization hosts, loopback `code`/`state`, `/auth/oauth/callback`, then
-`/auth/me`. PKCE stays server-side in Bifrost. Direct authorization URLs are
-confined to the pinned identity-provider hosts (Microsoft, Google or a generic
-OIDC provider); Bifrost-page authorization stays on the pinned origin. Callback
-parameters require `code`/`state`; bounded provider extras are ignored and
-provider errors are rejected. The host keeps the bearer in memory only and
+that page covers password, MFA, passkeys and any configured SSO, so other
+Bifrost auth providers and OIDC configurations are reached through the same
+entry. PKCE stays server-side in Bifrost. The authorization URL is confined to
+the pinned origin; callback parameters require `code`, `state` and the CLI
+transaction id, while bounded extras are ignored and provider errors are
+rejected. Direct native `/auth/oauth/*` SSO is deferred: advertising `localhost`
+while binding only `127.0.0.1` lets another local process claim the IPv6 callback
+and redeem the code. Revisit it only with matching dual-stack callback ownership
+or client-held proof at redemption. The host keeps the bearer in memory only and
 exposes an opaque per-login context that changes on every login. `Debug` never prints the
 bearer. The loopback login is blocking and must run on a worker thread, not the
 UI or async runtime thread. There is no token persistence or refresh yet, so an
@@ -118,22 +119,19 @@ expired session requires a new login. The setup UI, startup route and platform
 confirmation that the CLI OAuth contract is the desktop contract remain
 unwired; the module is retained as source-only until that reviewed slice.
 Tests cover origin/workflow pinning, callback state/parameter validation,
-Microsoft authorization-URL confinement, bearer redaction and bounded
-token/user fields. The Entra app registration must allow the loopback redirect,
-and Bifrost must have Microsoft SSO configured for the target install; neither is
-verified here. No live OAuth, browser, Provider
+authorization-URL origin confinement, bearer redaction and bounded token/user
+fields. No loopback interceptor, live login, passkey, browser, Provider
 credential or deployment was exercised.
 
 ## Decisions and remaining programs (2026-11-05)
 
 - **Desktop sign-in contract:** the desktop uses the Bifrost login page through
   the system browser and a localhost loopback callback by default, so password,
-  MFA, passkeys and configured SSO all work without native WebAuthn. A release
-  may instead pin direct OAuth/OIDC provider SSO for transparent account
-  pass-through. The client never sees the user's password. Direct SSO requires
-  the provider app's loopback redirect registration; technicians must already be
-  provisioned into the provider organization, because authentication alone does
-  not grant the Quick Support role.
+  MFA, passkeys and any configured SSO/OIDC provider all work without native
+  WebAuthn. The client never sees the user's password. Technicians must already
+  be provisioned into the provider organization, because authentication alone
+  does not grant the Quick Support role. Direct native OAuth is deferred until
+  callback ownership or client-held proof is defined.
 - **Session policy:** the bearer is in memory only. The pilot has no token
   persistence and no refresh; expiry requires a new login. Protected storage and
   refresh are a later decision, not an assumed capability.

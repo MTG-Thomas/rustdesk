@@ -62,14 +62,17 @@ impl Setup {
     }
 
     fn sign_in(&mut self) -> String {
+        if self.signing_in {
+            return self.status_json();
+        }
         let Some(host) = self.host.clone() else {
             self.detail = UNAVAILABLE.into();
             return self.status_json();
         };
-        if !self.signing_in {
-            self.signing_in = true;
-            self.detail = "waiting for browser sign-in".into();
-        }
+        self.signing_in = true;
+        self.technician_id = None;
+        self.fingerprint = None;
+        self.detail = "waiting for browser sign-in".into();
         let status = self.status_json();
         // Never hold the setup lock while the blocking browser flow runs.
         std::thread::spawn(move || {
@@ -89,6 +92,8 @@ impl Setup {
                     setup.technician_id = technician;
                     setup.detail = "signed in".into();
                 } else {
+                    setup.technician_id = None;
+                    setup.fingerprint = None;
                     setup.detail = "sign-in failed or was cancelled".into();
                 }
             }
@@ -217,6 +222,15 @@ mod tests {
         let setup = Setup::with_host(host());
         assert_eq!(state(&setup.status_json()).0, "signed_out");
         assert_eq!(state(&Setup::new().sign_in()).0, "unavailable");
+    }
+
+    #[test]
+    fn repeated_sign_in_while_running_does_not_admit_another_worker() {
+        let mut setup = Setup::with_host(host());
+        setup.signing_in = true;
+        let status = setup.sign_in();
+        assert_eq!(state(&status).0, "signing_in");
+        assert_eq!(state(&status).1, "signed out");
     }
 
     #[test]
