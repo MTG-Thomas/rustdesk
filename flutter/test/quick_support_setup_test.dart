@@ -59,8 +59,14 @@ void main() {
   });
 
   test('malformed or unknown status never becomes authority', () {
-    for (final raw in ['', 'not json', '[]', '{"state":"admin"}',
-      '{"state":"signed_out"}', '{"state":"signed_out","detail":""}']) {
+    for (final raw in [
+      '',
+      'not json',
+      '[]',
+      '{"state":"admin"}',
+      '{"state":"signed_out"}',
+      '{"state":"signed_out","detail":""}'
+    ]) {
       final status = QuickSupportSetupStatus.fromJson(raw);
       expect(status.isUnavailable, isTrue, reason: raw);
       expect(status.technicianId, isNull);

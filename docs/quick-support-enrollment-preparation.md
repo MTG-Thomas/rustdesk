@@ -189,8 +189,9 @@ Remaining programs, in dependency order:
   that link changes.
 - Generated FRB bindings are **not** hand-edited. After the pinned generator is
   available, regenerate with:
-  `flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart --c-output ./flutter/macos/Runner/bridge_generated.h`
-  then run `flutter pub get`, `flutter analyze` and
+  `flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart --c-output ./flutter/macos/Runner/bridge_generated.h --llvm-path /usr/lib/llvm-19`
+  (ffigen needs the LLVM directory containing `libclang.so`), copy the header to
+  `flutter/ios/Runner/bridge_generated.h`, then run `flutter pub get`, `flutter analyze` and
   `flutter test test/quick_support_setup_test.dart`.
 - The Flutter/Dart toolchain is absent here, so the page, route and adapter test
   are source-reviewed only. The offline Rust harness covers the setup contract;

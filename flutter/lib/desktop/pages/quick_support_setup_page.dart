@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/quick_support_setup.dart';
+import 'package:flutter_hbb/models/platform_model.dart';
 
 class QuickSupportSetupPage extends StatefulWidget {
   const QuickSupportSetupPage({Key? key}) : super(key: key);
@@ -96,8 +97,7 @@ class _QuickSupportSetupPageState extends State<QuickSupportSetupPage> {
             runSpacing: 8,
             children: [
               FilledButton(
-                onPressed:
-                    _busy || !status.canSignIn ? null : () => _signIn(),
+                onPressed: _busy || !status.canSignIn ? null : () => _signIn(),
                 child: Text(translate('Sign in')),
               ),
               OutlinedButton(
