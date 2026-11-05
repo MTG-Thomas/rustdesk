@@ -2,6 +2,7 @@ use crate::quick_support_workstation::EnrollmentReceipt;
 use quick_support_guard::{Denied, WorkstationKey};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 /// Immutable context retained by one authenticated Provider HTTP invocation.
 /// This is not a credential or authority; the host owns authentication and must
@@ -103,10 +104,15 @@ impl EnrollmentAttempt {
         result: &Value,
     ) -> Result<EnrollmentReceipt, Denied> {
         self.check_context(answered_request_id, current_authentication_context)?;
+        let technician = Uuid::parse_str(&self.technician_id).map_err(|_| Denied)?;
         let object = result.as_object().ok_or(Denied)?;
         if object.len() != 3
-            || object.get("technician_id").and_then(Value::as_str)
-                != Some(self.technician_id.as_str())
+            || object
+                .get("technician_id")
+                .and_then(Value::as_str)
+                .and_then(|value| Uuid::parse_str(value).ok())
+                .filter(|value| *value == technician)
+                .is_none()
             || object.get("fingerprint").and_then(Value::as_str)
                 != Some(format!("{:x}", Sha256::digest(self.public_key.as_bytes())).as_str())
             || object

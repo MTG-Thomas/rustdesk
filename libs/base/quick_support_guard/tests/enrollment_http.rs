@@ -46,6 +46,20 @@ fn attempt() -> (EnrollmentAttempt, Value, WorkstationKey) {
 }
 
 #[test]
+fn equivalent_technician_spelling_is_accepted_on_the_http_completion_path() {
+    let (attempt, result, _) = attempt();
+    let braced = json!({
+        "technician_id": format!("{{{TECHNICIAN}}}"),
+        "fingerprint": result["fingerprint"].clone(),
+        "enrolled_at": result["enrolled_at"].clone(),
+    });
+    let receipt = attempt
+        .complete(REQUEST, "synthetic-auth-session", &braced)
+        .unwrap();
+    assert_eq!(receipt.technician_id, TECHNICIAN);
+}
+
+#[test]
 fn equivalent_technician_identifier_spellings_bind_the_same_receipt() {
     let (_, result, key) = attempt();
     let receipt = quick_support_workstation::EnrollmentReceipt {
