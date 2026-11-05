@@ -1137,6 +1137,49 @@ pub fn main_get_version() -> String {
     get_version()
 }
 
+#[cfg(not(feature = "quick-support-child"))]
+const QUICK_SUPPORT_UNAVAILABLE: &str = r#"{"state":"unavailable","detail":"Quick Support is not enabled in this build","technician_id":null,"fingerprint":null}"#;
+
+#[cfg(feature = "quick-support-child")]
+pub fn quick_support_setup_status() -> String {
+    crate::quick_support_setup::status()
+}
+
+#[cfg(not(feature = "quick-support-child"))]
+pub fn quick_support_setup_status() -> String {
+    QUICK_SUPPORT_UNAVAILABLE.into()
+}
+
+#[cfg(feature = "quick-support-child")]
+pub fn quick_support_setup_sign_in() -> String {
+    crate::quick_support_setup::sign_in()
+}
+
+#[cfg(not(feature = "quick-support-child"))]
+pub fn quick_support_setup_sign_in() -> String {
+    QUICK_SUPPORT_UNAVAILABLE.into()
+}
+
+#[cfg(feature = "quick-support-child")]
+pub fn quick_support_setup_sign_out() -> String {
+    crate::quick_support_setup::sign_out()
+}
+
+#[cfg(not(feature = "quick-support-child"))]
+pub fn quick_support_setup_sign_out() -> String {
+    QUICK_SUPPORT_UNAVAILABLE.into()
+}
+
+#[cfg(feature = "quick-support-child")]
+pub fn quick_support_setup_enroll(request_id: String) -> String {
+    crate::quick_support_setup::enroll(&request_id)
+}
+
+#[cfg(not(feature = "quick-support-child"))]
+pub fn quick_support_setup_enroll(_request_id: String) -> String {
+    QUICK_SUPPORT_UNAVAILABLE.into()
+}
+
 pub fn main_get_fav() -> Vec<String> {
     get_fav()
 }

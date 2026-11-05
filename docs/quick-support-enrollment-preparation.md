@@ -151,3 +151,24 @@ Remaining programs, in dependency order:
 4. **Device acceptance.** The Windows technician host LT002-H8WL8H4 is
    unreachable, and no two-device consent/control/cleanup run has been recorded.
    Named devices and accounts remain owner-supplied.
+
+## Setup surface and private launch gate (source-only, 2026-11-05)
+
+- `quick_support_setup` exposes `status`, `sign_in`, `sign_out` and `enroll` as
+  JSON strings for the Flutter FFI (`quick_support_setup_status`,
+  `quick_support_setup_sign_in`, `quick_support_setup_sign_out`,
+  `quick_support_setup_enroll`). The contract is fail-closed: without an
+  installed release configuration it reports `unavailable`; with configuration
+  but no wired sign-in worker it stays `signed_out`; enrollment refuses and never
+  fabricates a fingerprint. The bearer is never serialized.
+- The Flutter page and route are not added in this slice because the local
+  environment has no Flutter/Dart toolchain or FRB codegen. The FFI functions are
+  the reviewable UI seam; a settings page can call them without new privilege.
+- A private invocation now routes through
+  `quick_support_startup::private_launch()`, which always refuses until signed
+  release configuration, parent verification and the issuer exist. Ordinary
+  startup paths are unchanged; there is no fallback from private to ordinary.
+- Offline proof: the source harness compiles the setup contract with the host and
+  enrollment modules; 26 tests pass (5 setup-specific), clippy `-D warnings`
+  clean. No OAuth flow, network call, credential, deployment or device was
+  exercised.
