@@ -18,8 +18,8 @@ on:
 # in this file!
 
 env:
-  SCITER_RUST_VERSION: "1.75" # https://github.com/rustdesk/rustdesk/discussions/7503, also 1.78 has ABI change which causes our sciter version not working, https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
-  RUST_VERSION: "1.75" # sciter failed on m1 with 1.78 because of https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
+  SCITER_RUST_VERSION: "1.90.0" # abi_thiscall has been stable since 1.73; the stale feature gate that forced 1.75 is gone (MTG-Thomas/rust-sciter@1684c78)
+  RUST_VERSION: "1.90.0" # Track the matrix: the locked graph now declares rust-version 1.88
   WINDOWS_FLUTTER_RUST_VERSION: "1.90.0" # Patched dependency manifests require Rust 2024 support.
   ANDROID_RUST_VERSION: "1.90.0" # Existing Android dependencies require newer Rust; retain Sciter ABI pins.
   LINUX_FLUTTER_RUST_VERSION: "1.90.0" # Keep non-Sciter Linux builds compatible with locked dependencies.
@@ -512,30 +512,20 @@ jobs:
       - name: Install Rust toolchain
         shell: bash
         run: |
-          # Sciter's abi_thiscall feature requires nightly Rust.
+          # abi_thiscall has been stable since Rust 1.73. This leg needed a nightly
+          # compiler only because the sciter fork still carried a stale
+          # #![feature(abi_thiscall)] gate; that gate is removed in
+          # MTG-Thomas/rust-sciter@1684c78, so the leg now uses the same stable
+          # toolchain as the rest of the matrix.
+          #
           # Use an i686 host toolchain so build scripts can load the 32-bit LLVM installed above.
           # Since rustup 1.29.1, i686 toolchains on x64 Windows require --force-non-host
           # for both installation and default selection, even though WOW64 can run them.
           # See https://github.com/rust-lang/rustup/pull/4935.
-          # Alternatively, an x64 compiler could use cargo build --target i686-pc-windows-msvc.
-          # This requires 64-bit LLVM for host build scripts and updated packaging paths,
-          # and has not been manually verified for RustDesk.
-          rustup toolchain install nightly-2023-10-13-${{ matrix.job.target }} \
+          rustup toolchain install 1.90.0-${{ matrix.job.target }} \
             --target ${{ matrix.job.target }} --component rustfmt \
             --profile minimal --no-self-update --force-non-host
-          rustup default nightly-2023-10-13-${{ matrix.job.target }} --force-non-host
-          # Modern Cargo parses patched optional dependency metadata; retain the
-          # original compiler and host architecture for Sciter's ABI/build scripts.
-          rustup toolchain install 1.90.0-${{ matrix.job.target }} \
-            --profile minimal --no-self-update --force-non-host
-          rustup run 1.90.0-${{ matrix.job.target }} rustc --edition=2021 \
-            tools/sciter-cargo-rustc.rs -o "$RUNNER_TEMP/sciter-cargo-rustc.exe"
-          rustup run 1.90.0-${{ matrix.job.target }} rustc --edition=2021 --test \
-            tools/sciter-cargo-rustc.rs -o "$RUNNER_TEMP/sciter-cargo-rustc-tests.exe"
-          "$RUNNER_TEMP/sciter-cargo-rustc-tests.exe"
-          echo "RUSTC=$(rustup which --toolchain nightly-2023-10-13-${{ matrix.job.target }} rustc)" >> "$GITHUB_ENV"
-          echo "RUSTDOC=$(rustup which --toolchain nightly-2023-10-13-${{ matrix.job.target }} rustdoc)" >> "$GITHUB_ENV"
-          echo "RUSTC_WRAPPER=$RUNNER_TEMP/sciter-cargo-rustc.exe" >> "$GITHUB_ENV"
+          rustup default 1.90.0-${{ matrix.job.target }} --force-non-host
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -575,7 +565,7 @@ jobs:
           python3 res/inline-sciter.py
           # Patch sciter x86
           sed -i 's/branch = "dyn"/branch = "dyn_x86"/g' ./Cargo.toml
-          cargo +1.90.0-${{ matrix.job.target }} update -p sciter-rs --precise 674e07d3066ca9a92ced3816203ab6b652629d1e
+          cargo +1.90.0-${{ matrix.job.target }} update -p sciter-rs --precise 1684c7898e3f12d43d0af37ab5a93bbac90bed13
           cargo +1.90.0-${{ matrix.job.target }} build --locked --features inline,vram,hwcodec --release --bins
           mkdir -p ./Release
           mv ./target/release/rustdesk.exe ./Release/rustdesk.exe
