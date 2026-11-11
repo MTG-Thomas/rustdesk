@@ -123,8 +123,8 @@ unsafe fn set_delegate(handler: Option<Box<dyn AppHandler>>) {
     let _: () = msg_send![manager,
                               setEventHandler: delegate
                               andSelector: sel!(handleEvent:withReplyEvent:)
-                              forEventClass: fruitbasket::kInternetEventClass
-                              andEventID: fruitbasket::kAEGetURL];
+                              forEventClass: 0x4755_524c_u32
+                              andEventID: 0x4755_524c_u32];
     let () = msg_send![NSApp(), setDelegate: delegate];
 }
 

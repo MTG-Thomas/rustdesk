@@ -347,7 +347,7 @@ dependencies = [
  "num-traits 0.2.19",
  "rusticata-macros",
  "thiserror 1.0.61",
- "time 0.3.47",
+ "time",
 ]
 
 [[package]]
@@ -2203,16 +2203,6 @@ dependencies = [
 
 [[package]]
 name = "dirs"
-version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13aea89a5c93364a98e9b37b2fa237effbb694d5cfe01c5b70941f7eb087d5e3"
-dependencies = [
- "cfg-if 0.1.10",
- "dirs-sys 0.3.7",
-]
-
-[[package]]
-name = "dirs"
 version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca3aa72a6f96ea37bbc5aa912f6788242832f75369bdfdadcb0e38423f100059"
@@ -2990,19 +2980,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13624c2627564efccf4934284bdd98cbaa14e79b0b5a141218e507b3a823456"
 dependencies = [
  "percent-encoding",
-]
-
-[[package]]
-name = "fruitbasket"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "898289b8e0528c84fb9b88f15ac9d5109bcaf23e0e49bb6f64deee0d86b6a351"
-dependencies = [
- "dirs 2.0.2",
- "objc",
- "objc-foundation",
- "objc_id",
- "time 0.1.45",
 ]
 
 [[package]]
@@ -6295,7 +6272,7 @@ dependencies = [
  "line-wrap",
  "quick-xml 0.31.0",
  "serde 1.0.228",
- "time 0.3.47",
+ "time",
 ]
 
 [[package]]
@@ -6972,7 +6949,7 @@ dependencies = [
  "pem",
  "ring",
  "rustls-pki-types",
- "time 0.3.47",
+ "time",
  "x509-parser",
  "yasna",
 ]
@@ -7330,7 +7307,6 @@ dependencies = [
  "fon",
  "fontdb",
  "foreign-types 0.3.2",
- "fruitbasket",
  "gtk",
  "hbb_common",
  "hex",
@@ -7902,7 +7878,7 @@ dependencies = [
  "const_format",
  "git2",
  "is_debug",
- "time 0.3.47",
+ "time",
  "tzdb 0.5.10",
 ]
 
@@ -8690,17 +8666,6 @@ dependencies = [
  "flate2",
  "jpeg-decoder",
  "weezl",
-]
-
-[[package]]
-name = "time"
-version = "0.1.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b797afad3f312d1c66a56d11d0316f916356d11bd158fbc6ca6389ff6bf805a"
-dependencies = [
- "libc",
- "wasi 0.10.0+wasi-snapshot-preview1",
- "winapi 0.3.9",
 ]
 
 [[package]]
@@ -9534,12 +9499,6 @@ dependencies = [
 
 [[package]]
 name = "wasi"
-version = "0.10.0+wasi-snapshot-preview1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a143597ca7c7793eff794def352d41792a93c481eb1042423ff7ff72ba2c31f"
-
-[[package]]
-name = "wasi"
 version = "0.11.0+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c8d87e72b64a3b4db28d11ce29237c246188f4f51057d65a7eab63b7987e423"
@@ -9856,7 +9815,7 @@ dependencies = [
  "smol_str",
  "stun",
  "thiserror 1.0.61",
- "time 0.3.47",
+ "time",
  "tokio",
  "turn",
  "url",
@@ -11023,7 +10982,7 @@ dependencies = [
  "ring",
  "rusticata-macros",
  "thiserror 1.0.61",
- "time 0.3.47",
+ "time",
 ]
 
 [[package]]
@@ -11084,7 +11043,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
 dependencies = [
- "time 0.3.47",
+ "time",
 ]
 
 [[package]]

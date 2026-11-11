@@ -165,7 +165,6 @@ dispatch = "0.2"
 core-foundation = "0.9"
 core-graphics = "0.22"
 include_dir = "0.7"
-fruitbasket = "0.10"
 objc_id = "0.1"
 # If we use piet "0.7" here, we must also update core-graphics to "0.24".
 piet = "0.6"
