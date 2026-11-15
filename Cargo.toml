@@ -96,7 +96,7 @@ reqwest = { version = "0.12", features = ["blocking", "socks", "json", "native-t
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 # https://github.com/rustdesk/rustdesk/discussions/10197, not use cpal on linux
 cpal = { git = "https://github.com/rustdesk-org/cpal", branch = "osx-screencapturekit" }
-ringbuf = "0.3"
+ringbuf = "0.5.2"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 mac_address = "1.1"
