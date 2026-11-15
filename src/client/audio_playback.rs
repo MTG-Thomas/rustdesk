@@ -1,5 +1,5 @@
 use hbb_common::{log, log_throttle::LogThrottle, thiserror};
-use ringbuf::{ring_buffer::RbBase, Rb};
+use ringbuf::traits::{Consumer, Observer};
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     TryLockError,
@@ -87,7 +87,7 @@ impl AudioPlaybackWriter {
         discontinuity_generation: std::sync::Arc<AtomicUsize>,
     ) -> Result<Self, AudioPlaybackError> {
         let recovery = AudioPlaybackRecovery::new(config)?;
-        let buffer_capacity = audio_buffer.lock().unwrap().capacity();
+        let buffer_capacity = audio_buffer.lock().unwrap().capacity().get();
         let observed_discontinuity_generation = discontinuity_generation.load(Ordering::Relaxed);
         Ok(Self {
             audio_buffer,
