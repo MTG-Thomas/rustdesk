@@ -1,7 +1,7 @@
-//! Setup UI contract for Quick Support. This slice is fail-closed: the
-//! authenticated setup host exists, but release configuration and the
-//! issuer/deployment prerequisites are not installed, so sign-in and enrollment
-//! report that state and never claim success.
+//! Setup UI contract for Quick Support. This slice is fail-closed: sign-in is
+//! available only when the Provider coordinates were pinned into the signed
+//! release build, and enrollment still refuses until the issuer/deployment
+//! prerequisites exist. Neither path ever claims success it did not observe.
 
 use crate::quick_support_provider_session::{open_system_browser, ProviderConfig, ProviderHost};
 use quick_support_guard::Denied;
@@ -9,19 +9,42 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Mutex, OnceLock};
 
 const UNAVAILABLE: &str = "release configuration and issuer deployment are not installed";
+const INVALID_RELEASE: &str = "the release configuration is invalid";
+
+/// Provider origin and workflow id pinned at build time into the signed release
+/// artifact, so they inherit its signature. There is no runtime, invitation,
+/// registry or user-setting override: absent or invalid pins leave setup
+/// `unavailable`. Both are public coordinates, not credentials.
+const RELEASE_PROVIDER: Option<(&str, &str)> = match (
+    option_env!("RUSTDESK_QUICK_SUPPORT_PROVIDER_ORIGIN"),
+    option_env!("RUSTDESK_QUICK_SUPPORT_PROVIDER_WORKFLOW_ID"),
+) {
+    (Some(origin), Some(workflow_id)) => Some((origin, workflow_id)),
+    _ => None,
+};
+
+type ReleasePins = Option<(&'static str, &'static str)>;
 
 struct Setup {
     host: Option<Arc<Mutex<ProviderHost>>>,
+    release: ReleasePins,
     technician_id: Option<String>,
     signing_in: bool,
     detail: String,
     fingerprint: Option<String>,
 }
 
+fn release_host(release: ReleasePins) -> Option<Arc<Mutex<ProviderHost>>> {
+    let (origin, workflow_id) = release?;
+    let config = ProviderConfig::new(origin, workflow_id).ok()?;
+    Some(Arc::new(Mutex::new(ProviderHost::new(config))))
+}
+
 impl Setup {
     fn new() -> Self {
         Self {
             host: None,
+            release: None,
             technician_id: None,
             signing_in: false,
             detail: UNAVAILABLE.into(),
@@ -29,13 +52,36 @@ impl Setup {
         }
     }
 
+    #[cfg(test)]
     fn with_host(host: ProviderHost) -> Self {
         Self {
             host: Some(Arc::new(Mutex::new(host))),
+            release: None,
             technician_id: None,
             signing_in: false,
             detail: "signed out".into(),
             fingerprint: None,
+        }
+    }
+
+    /// Setup from the release pins. Malformed pins are reported, never repaired.
+    fn from_release(release: ReleasePins) -> Self {
+        if release.is_none() {
+            return Self::new();
+        }
+        match release_host(release) {
+            Some(host) => Self {
+                host: Some(host),
+                release,
+                technician_id: None,
+                signing_in: false,
+                detail: "signed out".into(),
+                fingerprint: None,
+            },
+            None => Self {
+                detail: INVALID_RELEASE.into(),
+                ..Self::new()
+            },
         }
     }
 
@@ -111,8 +157,11 @@ impl Setup {
 
     fn sign_out(&mut self) -> String {
         if self.signing_in {
-            // The worker holds the host lock; drop our reference instead of waiting.
-            self.host = None;
+            // The worker holds the host lock; replace our reference instead of
+            // waiting. A fresh host from the same release pins keeps setup
+            // available, and the worker's completion is ignored because the
+            // host identity changed. Without pins the host is simply dropped.
+            self.host = release_host(self.release);
         } else if let Some(host) = self.host.as_ref() {
             if let Ok(mut host) = host.lock() {
                 host.logout();
@@ -143,7 +192,7 @@ impl Setup {
 static SETUP: OnceLock<Mutex<Setup>> = OnceLock::new();
 
 fn service() -> &'static Mutex<Setup> {
-    SETUP.get_or_init(|| Mutex::new(Setup::new()))
+    SETUP.get_or_init(|| Mutex::new(Setup::from_release(RELEASE_PROVIDER)))
 }
 
 pub(crate) fn status() -> String {
@@ -174,19 +223,6 @@ pub(crate) fn enroll(request_id: &str) -> String {
     }
 }
 
-/// Only a trusted signed installer may call this; it is not exposed to the UI.
-/// Wiring it remains part of the release-configuration/issuer slice.
-#[allow(dead_code)]
-pub(crate) fn install_trusted_config(origin: &str, workflow_id: &str) -> Result<(), Denied> {
-    let config = ProviderConfig::new(origin, workflow_id)?;
-    match service().lock() {
-        Ok(mut setup) => {
-            *setup = Setup::with_host(ProviderHost::new(config));
-            Ok(())
-        }
-        Err(_) => Err(Denied),
-    }
-}
 
 fn unavailable(detail: &str) -> String {
     json!({
@@ -279,8 +315,37 @@ mod tests {
     }
 
     #[test]
-    fn trusted_configuration_rejects_untrusted_input() {
-        assert!(install_trusted_config("http://provider.example.test", WORKFLOW).is_err());
-        assert!(install_trusted_config("https://provider.example.test", "workflow").is_err());
+    fn release_pins_are_required_and_validated() {
+        assert_eq!(state(&Setup::from_release(None).status_json()).0, "unavailable");
+        for pins in [
+            ("http://provider.example.test", WORKFLOW),
+            ("https://provider.example.test", "workflow"),
+            ("https://provider.example.test/path", WORKFLOW),
+            ("https://user@provider.example.test", WORKFLOW),
+        ] {
+            let mut setup = Setup::from_release(Some(pins));
+            assert_eq!(
+                state(&setup.status_json()),
+                ("unavailable".into(), INVALID_RELEASE.into())
+            );
+            assert_eq!(state(&setup.sign_in()).0, "unavailable");
+        }
+        let setup = Setup::from_release(Some(("https://provider.example.test", WORKFLOW)));
+        assert_eq!(state(&setup.status_json()).0, "signed_out");
+    }
+
+    #[test]
+    fn sign_out_during_sign_in_keeps_release_setup_available() {
+        let mut setup = Setup::from_release(Some(("https://provider.example.test", WORKFLOW)));
+        let worker_host = setup.host.clone().unwrap();
+        setup.signing_in = true;
+        assert_eq!(state(&setup.sign_out()).0, "signed_out");
+        let current = setup.host.as_ref().unwrap();
+        // A late completion from the abandoned worker must not match.
+        assert!(!Arc::ptr_eq(current, &worker_host));
+
+        let mut unpinned = Setup::with_host(host());
+        unpinned.signing_in = true;
+        assert_eq!(state(&unpinned.sign_out()).0, "unavailable");
     }
 }
