@@ -1,9 +1,30 @@
 name: Quick Support primitive validation
 
+# Runs only when a Quick Support surface or its shared inputs change.
 on:
   pull_request:
+    paths:
+      - ".github/workflows/quick-support-primitives.yml"
+      - "Cargo.toml"
+      - "libs/base/quick_support_guard/**"
+      - "libs/quick_support_desktop_guard/**"
+      - "libs/hbb_common"
+      - "src/quick_support*"
+      - "src/platform/quick_support*"
+      - "tools/check-quick-support-linkage.py"
+      - "tools/quick-support-launcher/**"
   push:
     branches: [main]
+    paths:
+      - ".github/workflows/quick-support-primitives.yml"
+      - "Cargo.toml"
+      - "libs/base/quick_support_guard/**"
+      - "libs/quick_support_desktop_guard/**"
+      - "libs/hbb_common"
+      - "src/quick_support*"
+      - "src/platform/quick_support*"
+      - "tools/check-quick-support-linkage.py"
+      - "tools/quick-support-launcher/**"
   workflow_dispatch:
 
 permissions:
@@ -39,10 +60,15 @@ jobs:
           cargo +1.90.0 fmt --all --check
           cargo +1.90.0 test --locked
           cargo +1.90.0 clippy --locked --all-targets -- -D warnings
+      - name: Restore the pinned RustSec auditor
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/rust-tools
+          key: rust-tools-${{ runner.os }}-1.90.0-cargo-audit-0.22.2
       - name: Audit this primitive's complete locked dependencies
         run: |
-          cargo +1.90.0 install cargo-audit --version 0.22.2 --locked
-          cargo +1.90.0 audit --deny warnings --file Cargo.lock
+          test -x ~/.cache/rust-tools/bin/cargo-audit || cargo +1.90.0 install cargo-audit --version 0.22.2 --locked --root ~/.cache/rust-tools
+          PATH="$HOME/.cache/rust-tools/bin:$PATH" cargo +1.90.0 audit --deny warnings --file Cargo.lock
   artifact:
     name: Artifact verification / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
