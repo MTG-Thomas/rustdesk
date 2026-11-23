@@ -106,6 +106,8 @@ impl Receiver {
                 || !request.hwid.is_empty()
                 || request.os_login.is_some()
                 || request.option.is_some()
+                || !request.trusted_device_v2_token.is_empty()
+                || request.trusted_device_v2_supported
             {
                 return Err(Denied);
             }
@@ -588,13 +590,14 @@ mod tests {
     #[test]
     fn wrong_native_login_replay_expiry_and_control_eof_close_without_legacy_fallback() {
         let now = Instant::now();
-        for mixed in [false, true] {
+        for mixed in 0..4 {
             let receiver = prepared(now);
             let mut request = login();
-            if mixed {
-                request.password = vec![1].into();
-            } else {
-                request.username = "wrong-receiver".into();
+            match mixed {
+                0 => request.username = "wrong-receiver".into(),
+                1 => request.password = vec![1].into(),
+                2 => request.trusted_device_v2_token = vec![1].into(),
+                _ => request.trusted_device_v2_supported = true,
             }
             assert!(receiver.request(&mut request, 1001, now).is_err());
             assert!(request.quick_support_auth.is_none());
