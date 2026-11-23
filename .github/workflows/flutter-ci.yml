@@ -1,21 +1,9 @@
 name: Full Flutter CI
 
+# Every-platform Flutter build (Android, iOS, macOS, Linux, Windows, web).
+# Manual only: per-PR coverage comes from CI and Quick Support validation.
 on:
   workflow_dispatch:
-  pull_request:
-    paths-ignore:
-    - "docs/**"
-    - "README.md"
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - ".github/**"
-      - "docs/**"
-      - "README.md"
-      - "res/**"
-      - "appimage/**"
-      - "flatpak/**"
 
 jobs:
   run-ci:
