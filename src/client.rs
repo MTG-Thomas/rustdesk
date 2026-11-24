@@ -10,7 +10,7 @@ use cpal::{
 use crossbeam_queue::ArrayQueue;
 use magnum_opus::{Channels::*, Decoder as AudioDecoder};
 #[cfg(not(target_os = "linux"))]
-use ringbuf::{ring_buffer::RbBase, Rb};
+use ringbuf::traits::{Consumer, Observer, RingBuffer};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -2235,7 +2235,7 @@ impl Default for AudioBuffer {
 impl AudioBuffer {
     pub fn resize(&mut self, sample_rate: usize, channels: usize) {
         let capacity = sample_rate * channels * AUDIO_BUFFER_MS / 1000;
-        let old_capacity = self.0.lock().unwrap().capacity();
+        let old_capacity = self.0.lock().unwrap().capacity().get();
         if capacity != old_capacity {
             *self.0.lock().unwrap() = ringbuf::HeapRb::<f32>::new(capacity);
             self.1 = sample_rate * channels;
@@ -2296,7 +2296,7 @@ impl AudioBuffer {
         }
 
         let mut lock = self.0.lock().unwrap();
-        let cap = lock.capacity();
+        let cap = lock.capacity().get();
         let having = lock.occupied_len();
         let skip = (cap * max / (30 * N) + 1) & (!1);
         if (having > skip * 3) && (skip > 0) {
@@ -2319,7 +2319,7 @@ impl AudioBuffer {
     /// will be kept.
     fn append_pcm2(&self, buffer: &[f32]) -> usize {
         let mut lock = self.0.lock().unwrap();
-        let cap = lock.capacity();
+        let cap = lock.capacity().get();
         let having = lock.occupied_len() + buffer.len();
         lock.push_slice_overwrite(buffer);
         let discard = (having > cap).then(|| (having - cap, self.signal_discontinuity()));

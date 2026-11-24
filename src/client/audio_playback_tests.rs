@@ -1,5 +1,5 @@
 use super::{AudioPlaybackConfig, AudioPlaybackRecovery, AudioPlaybackWriter};
-use ringbuf::{ring_buffer::RbBase, Rb};
+use ringbuf::traits::{Observer, Producer};
 use std::{
     sync::{atomic::Ordering, mpsc, Arc, Mutex},
     time::Duration,
