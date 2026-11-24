@@ -147,20 +147,35 @@ credential or deployment was exercised.
 
 Remaining programs, in dependency order:
 
-1. **Setup UI and startup wiring.** Expose the sign-in/enrollment host through
-   the application UI and an isolated authenticated startup path. Not started;
-   this is the next source slice.
-2. **Issuer, bootstrap and grant.** No reviewed issuer exists in the inspected
-   authority bundle, and the production signing key requires owner custody and a
-   deployment. The authority UUID to HTTPS issuer mapping above is the
-   prerequisite.
-3. **Dependency audit.** Open PR #52 lowers the retained cached audit from 13 to
-   11 vulnerability entries and leaves 29 warnings. Its one failing check is the
-   i686 Sciter lane: the updated lock requires newer Rust/edition support than
-   that lane's pinned compiler (high confidence from MSRV metadata; the failing
-   log was not re-read). Either re-tool/retire that lane or waive the two
-   advisories; neither clears the remaining 11/29. This is an owner tradeoff and
-   is not claimed as a cleared gate.
+Status as of 2026-11-15 (the 2026-11-05 list is superseded):
+
+1. **Setup UI and startup wiring.** The setup page, FFI and browser sign-in host
+   are merged (#58). Sign-in becomes available only in a build that pins
+   `RUSTDESK_QUICK_SUPPORT_PROVIDER_ORIGIN` and
+   `RUSTDESK_QUICK_SUPPORT_PROVIDER_WORKFLOW_ID` at compile time (see below).
+   Still open: enrollment through a qualified Windows workstation store (the
+   page reports "enrollment is not wired"), and the isolated authenticated
+   startup path. `private_launch()` still refuses; it needs the signed release
+   configuration, parent verification and the issuer.
+2. **Issuer, bootstrap and grant.** Unchanged and owner-gated. No reviewed issuer
+   exists in the inspected authority bundle, and the production signing key
+   requires owner custody and a deployment. The authority UUID to HTTPS issuer
+   mapping above is the prerequisite.
+3. **Dependency audit.** #52 and #60 merged (the i686 Sciter lane now uses stable
+   Rust), followed by #61, #62 and #63, and the 2026-11-23 upstream sync
+   (#67). Dependency PR #64 updates `ringbuf`, `quinn-udp`, `rustix` and
+   `url`. With the RustSec DB at `52384ab55` (2026-11-23), the full lock then
+   has 8 vulnerability entries and 29 warnings. The warnings include `chrono`
+   and `humantime`, newly marked unmaintained with no patched release.
+   - `quick-xml` 0.30, 0.31 and 0.37: through `tauri-winrt-notification`, the
+     `os-version` build dependency and the `wayland-scanner` proc-macro.
+   - `crypto-bigint` 0.5.5: through `webrtc-dtls` in the `rustdesk-org/webrtc`
+     fork.
+   - `users` 0.11: through the `hbb_common` submodule and `libs/base`. No
+     patched release exists.
+   
+   Each needs an upstream release or a fork change, or a recorded owner
+   waiver. None is waived here.
 4. **Device acceptance.** The Windows technician host LT002-H8WL8H4 is
    unreachable, and no two-device consent/control/cleanup run has been recorded.
    Named devices and accounts remain owner-supplied.
@@ -174,8 +189,20 @@ Remaining programs, in dependency order:
   installed release configuration it reports `unavailable`; with configuration
   the sign-in worker runs the browser SSO flow and reports `signing_in` until it
   completes. Enrollment still refuses in this build and never fabricates a
-  fingerprint. The bearer is never serialized. Trusted configuration
-  installation is not wired yet, so the normal state remains `unavailable`.
+  fingerprint. The bearer is never serialized.
+- **Trusted configuration (2026-11-15).** The Provider origin and workflow id
+  come only from `RUSTDESK_QUICK_SUPPORT_PROVIDER_ORIGIN` and
+  `RUSTDESK_QUICK_SUPPORT_PROVIDER_WORKFLOW_ID`, read with `option_env!` when the
+  signed release artifact is built, so they inherit its signature. There is no
+  runtime, invitation, registry or user-setting override. If either value is
+  absent the state is `unavailable`. If a value is present but fails
+  `ProviderConfig` validation (HTTPS root origin with no credentials, query or
+  fragment, and a UUID workflow), the state is `unavailable` with "the release
+  configuration is invalid". Signing out during an in-flight sign-in replaces
+  the host from the same pins, so setup stays available and the abandoned
+  worker's completion is ignored. Ordinary builds set neither value and keep
+  the old behavior. Both values are public coordinates, not credentials.
+  Selecting them for a release is an owner decision.
 - A private invocation now routes through
   `quick_support_startup::private_launch()`, which always refuses until signed
   release configuration, parent verification and the issuer exist. Ordinary
