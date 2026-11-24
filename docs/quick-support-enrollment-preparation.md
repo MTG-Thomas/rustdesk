@@ -162,9 +162,11 @@ Status as of 2026-11-15 (the 2026-11-05 list is superseded):
    requires owner custody and a deployment. The authority UUID to HTTPS issuer
    mapping above is the prerequisite.
 3. **Dependency audit.** #52 and #60 merged (the i686 Sciter lane now uses stable
-   Rust), followed by #61, #62 and #63. The open dependency PR updates
-   `ringbuf`, `quinn-udp` and `rustix`. With the RustSec DB at `4ef2df8e`
-   (2026-11-13), the full lock then has 8 vulnerability entries and 27 warnings.
+   Rust), followed by #61, #62 and #63, and the 2026-11-23 upstream sync
+   (#67). Dependency PR #64 updates `ringbuf`, `quinn-udp`, `rustix` and
+   `url`. With the RustSec DB at `52384ab55` (2026-11-23), the full lock then
+   has 8 vulnerability entries and 29 warnings. The warnings include `chrono`
+   and `humantime`, newly marked unmaintained with no patched release.
    - `quick-xml` 0.30, 0.31 and 0.37: through `tauri-winrt-notification`, the
      `os-version` build dependency and the `wayland-scanner` proc-macro.
    - `crypto-bigint` 0.5.5: through `webrtc-dtls` in the `rustdesk-org/webrtc`
