@@ -77,7 +77,13 @@ Source integration findings:
   alternate login paths. Generic installed IPC is not an isolated consent source.
 - `Config::path` uses `directories_next::ProjectDirs`, whose Windows
   implementation uses Known Folder APIs. The launcher's `APPDATA` environment
-  override alone does not isolate it. Address this before connecting startup.
+  override alone does not isolate it. This is addressed in source: with the
+  `hbb_common/quick-support-profile` feature, `Config::path`, `log_path`, the
+  home lookup and the IPC path return the private profile. That profile is set
+  once by `install_after_parent_verification()` and cannot be switched back.
+  CI tests the hook in "Test actual Quick Support profile Config hooks". It is
+  still unproven on a real Windows device, and startup must run that install
+  before any Config access.
 
 ## Pilot capability policy
 
