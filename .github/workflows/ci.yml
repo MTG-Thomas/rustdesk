@@ -24,6 +24,14 @@ on:
       - "appimage/**"
       - "flatpak/**"
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # Superseded PR pushes are cancelled; every main commit still completes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # ensure_cargo_fmt:
   #   name: Ensure 'cargo fmt' has been run
@@ -263,7 +271,7 @@ jobs:
             CARGO_TEST_OPTIONS="--lib --bin ${PROJECT_NAME}"
             ;;
           *)
-            CARGO_TEST_OPTIONS="--workspace --no-fail-fast -- --skip test_get_cursor_pos --skip test_get_key_state"
+            CARGO_TEST_OPTIONS="--workspace --no-fail-fast"
             ;;
         esac;
 
@@ -277,3 +285,12 @@ jobs:
         use-cross: ${{ matrix.job.use-cross }}
         command: test
         args: --locked --target=${{ matrix.job.target }} ${{ steps.test-options.outputs.CARGO_TEST_OPTIONS}}
+
+    # drm and unix-file-copy-paste are off by default, so the run above compiles none of their tests.
+    - name: Run drm and unix-file-copy-paste tests
+      if: matrix.job.target == 'x86_64-unknown-linux-gnu'
+      shell: bash
+      run: |
+        cargo test --locked --target=${{ matrix.job.target }} --lib --features drm,drm-wake
+        cargo test --locked --target=${{ matrix.job.target }} -p scrap --features drm
+        cargo test --locked --target=${{ matrix.job.target }} -p clipboard --features unix-file-copy-paste

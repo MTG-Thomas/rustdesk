@@ -145,7 +145,7 @@ synthetic acceptance or bypass normal approval/security controls.
 ### Native login protocol plumbing (source only)
 
 The optional desktop client now has in-memory workstation login material and a
-separate `LoginRequest.quick_support_auth` field (18) for the grant and
+separate `LoginRequest.quick_support_auth` field (1000; it was 18 until upstream used 18 and 19) for the grant and
 challenge-bound workstation signature. The supplied signer creates no keys here.
 The adapter refuses alternate-service requests, wrong receivers, short legacy
 challenges and signer failures; it clears password, device trust, OS login and

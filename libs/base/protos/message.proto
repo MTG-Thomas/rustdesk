@@ -84,7 +84,11 @@ message LoginRequest {
   string my_platform = 13;
   bytes hwid = 14;
   string avatar = 17;
-  QuickSupportAuthentication quick_support_auth = 18;
+  bytes trusted_device_v2_token = 18;
+  bool trusted_device_v2_supported = 19;
+  // Fork-only. Numbered far above upstream's range so upstream additions
+  // cannot collide with it (it was 18 before upstream claimed 18 and 19).
+  QuickSupportAuthentication quick_support_auth = 1000;
 }
 
 message QuickSupportAuthentication {
@@ -99,6 +103,7 @@ message Terminal {
 message Auth2FA {
   string code = 1;
   bytes hwid = 2;
+  bool trust_this_device = 3;
 }
 
 message ChatMessage { string text = 1; }
@@ -153,6 +158,8 @@ message LoginResponse {
     PeerInfo peer_info = 2;
   }
   bool enable_trusted_devices = 3;
+  bool trusted_device_v2_supported = 4;
+  bytes trusted_device_v2_token = 5;
 }
 
 message TouchScaleUpdate {
@@ -1036,5 +1043,7 @@ message Message {
     TerminalAction terminal_action = 31;
     TerminalResponse terminal_response = 32;
     PortForwardChannel port_forward_channel = 33;
+    // Auto Login: the peer types the password only if it is at its logon or lock screen.
+    OSLogin os_login = 34;
   }
 }
