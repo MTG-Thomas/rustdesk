@@ -15,6 +15,8 @@ pub(crate) fn attach_login(
     request.hwid.clear();
     request.os_login = Default::default();
     request.option = Default::default();
+    request.trusted_device_v2_token.clear();
+    request.trusted_device_v2_supported = false;
     request.quick_support_auth = Some(base::message_proto::QuickSupportAuthentication {
         grant: grant.into(),
         workstation_proof: proof.to_vec().into(),
@@ -43,6 +45,8 @@ mod tests {
             hwid: vec![3].into(),
             os_login: Some(OSLogin::new()).into(),
             option: Some(OptionMessage::new()).into(),
+            trusted_device_v2_token: vec![9].into(),
+            trusted_device_v2_supported: true,
             ..Default::default()
         };
         attach_login(&login, &"x".repeat(32), &mut request).unwrap();
@@ -53,6 +57,8 @@ mod tests {
         assert!(request.hwid.is_empty());
         assert!(request.os_login.is_none());
         assert!(request.option.is_none());
+        assert!(request.trusted_device_v2_token.is_empty());
+        assert!(!request.trusted_device_v2_supported);
         request.set_terminal(Default::default());
         assert!(attach_login(&login, &"x".repeat(32), &mut request).is_err());
         request.union = None;
